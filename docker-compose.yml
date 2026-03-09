@@ -1,0 +1,65 @@
+version: "3.9"
+
+x-party-common: &party-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /app
+  devices:
+    - /dev/sgx_enclave:/dev/sgx_enclave
+    - /dev/sgx_provision:/dev/sgx_provision
+  restart: unless-stopped
+
+services:
+  party1:
+    <<: *party-common
+    container_name: noise-party-1
+    ports:
+      - "7001:7000"
+    command: >
+      /app/build/host/noise_party
+      /app/build/enclave/noise_enclave.signed
+      /app/noise.conf
+      party1
+
+  party2:
+    <<: *party-common
+    container_name: noise-party-2
+    ports:
+      - "7002:7000"
+    command: >
+      /app/build/host/noise_party
+      /app/build/enclave/noise_enclave.signed
+      /app/noise.conf
+      party2
+
+  party3:
+    <<: *party-common
+    container_name: noise-party-3
+    ports:
+      - "7003:7000"
+    command: >
+      /app/build/host/noise_party
+      /app/build/enclave/noise_enclave.signed
+      /app/noise.conf
+      party3
+
+  party4:
+    <<: *party-common
+    container_name: noise-party-4
+    ports:
+      - "7004:7000"
+    command: >
+      /app/build/host/noise_party
+      /app/build/enclave/noise_enclave.signed
+      /app/noise.conf
+      party4
+
+  controller:
+    <<: *party-common
+    container_name: noise-controller
+    profiles:
+      - tools
+    command: >
+      /app/build/host/noise_ctl
+      1 1 /app/noise.conf

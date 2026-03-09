@@ -1,0 +1,66 @@
+enclave
+{
+    from "openenclave/edl/sgx/sgx.edl" import *;
+
+    struct share_package_t
+    {
+        uint64_t round_id;
+        uint64_t sender_id;
+        uint64_t receiver_id;
+        uint64_t share_x;
+        uint64_t share_y;
+        uint64_t sigma;
+    };
+
+    struct ack_message_t
+    {
+        uint64_t round_id;
+        uint64_t acking_party;
+        uint64_t for_sender;
+        uint64_t sigma;
+        uint64_t accepted;
+    };
+
+    struct share_point_t
+    {
+        uint64_t x;
+        uint64_t y;
+    };
+
+    trusted
+    {
+        public int ecall_init_party(
+            uint64_t party_id,
+            uint64_t party_count,
+            uint64_t threshold);
+
+        public int ecall_sharegen(
+            uint64_t round_id,
+            [out, count=package_count] share_package_t* packages,
+            size_t package_count,
+            [out] uint64_t* sampled_secret);
+
+        public int ecall_sharegen_batch(
+            [in, count=batch_count] uint64_t* round_ids,
+            size_t batch_count,
+            [out, count=package_count] share_package_t* packages,
+            size_t package_count,
+            [out, count=batch_count] uint64_t* sampled_secrets);
+
+        public int ecall_store(
+            [in] share_package_t* package,
+            [out] ack_message_t* ack);
+
+        public int ecall_store_batch(
+            [in, count=batch_count] share_package_t* packages,
+            size_t batch_count,
+            [out, count=batch_count] ack_message_t* acks);
+
+        public int ecall_done(
+            [out] share_point_t* aggregate);
+
+        public int ecall_done_batch(
+            [out, count=batch_count] share_point_t* aggregates,
+            size_t batch_count);
+    };
+};
