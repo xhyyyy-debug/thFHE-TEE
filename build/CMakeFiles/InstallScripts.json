@@ -1,9 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/root/thFHE-TEE/build/cmake_install.cmake",
-		"/root/thFHE-TEE/build/enclave/cmake_install.cmake",
-		"/root/thFHE-TEE/build/host/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
