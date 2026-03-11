@@ -12,11 +12,25 @@ else()
 endif()
 
 set(OEEDGER8R_SEARCH_ARGS --search-path ${CMAKE_SOURCE_DIR})
-if (TARGET openenclave::oehost)
-    get_target_property(OE_HOST_INCLUDE_DIRS openenclave::oehost INTERFACE_INCLUDE_DIRECTORIES)
-    foreach(dir IN LISTS OE_HOST_INCLUDE_DIRS)
-        list(APPEND OEEDGER8R_SEARCH_ARGS --search-path ${dir})
-    endforeach()
+
+find_path(OE_SDK_INCLUDE_DIR
+    NAMES openenclave/edl/syscall.edl
+    PATHS
+        /opt/openenclave/include
+        /usr/local/include
+        /usr/include
+    REQUIRED)
+
+list(APPEND OEEDGER8R_SEARCH_ARGS
+    --search-path ${OE_SDK_INCLUDE_DIR}
+)
+
+if (EXISTS "${OE_SDK_INCLUDE_DIR}/openenclave/edl/sgx")
+    list(APPEND OEEDGER8R_SEARCH_ARGS
+        --search-path ${OE_SDK_INCLUDE_DIR}/openenclave/edl/sgx
+    )
+else()
+    message(FATAL_ERROR "Open Enclave SGX EDL directory not found: ${OE_SDK_INCLUDE_DIR}/openenclave/edl/sgx")
 endif()
 
 file(MAKE_DIRECTORY ${HOST_GEN_DIR})
@@ -71,9 +85,18 @@ target_link_libraries(
 
 add_dependencies(${PARTY_TARGET} noise_enclave_sign)
 
-copy_built_enclave(
+if (NOT DEFINED NOISE_SIGNED_ENCLAVE)
+    message(FATAL_ERROR "NOISE_SIGNED_ENCLAVE not set. Ensure enclave is configured before host.")
+endif()
+
+add_custom_command(
     TARGET ${PARTY_TARGET}
-    DEPENDENT_TARGET noise_enclave_sign)
+    POST_BUILD
+    COMMAND
+        ${CMAKE_COMMAND} -E copy_if_different
+        ${NOISE_SIGNED_ENCLAVE}
+        $<TARGET_FILE_DIR:${PARTY_TARGET}>
+    COMMENT "Copying signed enclave next to host binary")
 
 add_executable(
     ${CONTROLLER_TARGET}

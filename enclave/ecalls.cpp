@@ -29,7 +29,7 @@ extern "C" int ecall_sharegen(
         round_id,
         reinterpret_cast<SharePackage*>(packages),
         package_count,
-        sampled_secret);
+        reinterpret_cast<noise::ShareValue*>(sampled_secret));
 }
 
 extern "C" int ecall_sharegen_batch(
@@ -44,7 +44,7 @@ extern "C" int ecall_sharegen_batch(
         batch_count,
         reinterpret_cast<SharePackage*>(packages),
         package_count,
-        sampled_secrets);
+        reinterpret_cast<noise::ShareValue*>(sampled_secrets));
 }
 
 extern "C" int ecall_store(

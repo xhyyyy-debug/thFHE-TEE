@@ -1,0 +1,23 @@
+# ninja log v5
+0	16	1773130950359188217	enclave/generated/noise_t.c	91219b0565a10ed5
+0	16	1773130950359188217	enclave/generated/noise_t.h	91219b0565a10ed5
+0	16	1773130950359188217	/root/thFHE-TEE/build/enclave/generated/noise_t.c	91219b0565a10ed5
+0	16	1773130950359188217	/root/thFHE-TEE/build/enclave/generated/noise_t.h	91219b0565a10ed5
+16	75	1773130950419189409	enclave/CMakeFiles/noise_enclave.dir/enc.cpp.o	511b586c243a0183
+0	329	1773130950671194418	host/CMakeFiles/host_common.dir/network.cpp.o	5de24a2918ed9c90
+75	579	1773130950923199426	enclave/CMakeFiles/noise_enclave.dir/ecalls.cpp.o	d7ca30de021082bb
+0	1174	1773130951515211192	host/CMakeFiles/host_common.dir/config.cpp.o	6fb11caf05939f2f
+1174	1210	1773130951551211907	host/libhost_common.a	79323c2e32d9fdd3
+329	1313	1773130951655213974	enclave/CMakeFiles/noise_enclave.dir/generated/noise_t.c.o	6dab21ee89a842c9
+1314	1491	1773130951831217472	enclave/noise_enclave	b1a3673a9a91930c
+1491	1528	1773130951871218268	enclave/noise_enclave.signed	3e58c484ffdf92e8
+1491	1528	1773130951871218268	/root/thFHE-TEE/build/enclave/noise_enclave.signed	3e58c484ffdf92e8
+1528	1535	1773130951879218426	host/generated/noise_u.c	64dee87e3367b75d
+1528	1535	1773130951879218426	host/generated/noise_u.h	64dee87e3367b75d
+1528	1535	1773130951879218426	/root/thFHE-TEE/build/host/generated/noise_u.c	64dee87e3367b75d
+1528	1535	1773130951879218426	/root/thFHE-TEE/build/host/generated/noise_u.h	64dee87e3367b75d
+579	1628	1773130951971220254	host/CMakeFiles/noise_ctl.dir/controller.cpp.o	efd8a4a084db67e5
+1628	1821	1773130952163224070	host/noise_ctl	8f55dfe68377075d
+1535	2057	1773130952399228761	host/CMakeFiles/noise_party.dir/generated/noise_u.c.o	de228279f5bed97b
+1535	2601	1773130952943239573	host/CMakeFiles/noise_party.dir/host.cpp.o	eaa757c3e463f5b3
+2601	2725	1773130953047241640	host/noise_party	538fa77cd9238d65

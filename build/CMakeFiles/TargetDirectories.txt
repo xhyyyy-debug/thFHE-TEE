@@ -1,0 +1,11 @@
+/root/thFHE-TEE/build/CMakeFiles/edit_cache.dir
+/root/thFHE-TEE/build/CMakeFiles/rebuild_cache.dir
+/root/thFHE-TEE/build/enclave/CMakeFiles/noise_enclave.dir
+/root/thFHE-TEE/build/enclave/CMakeFiles/noise_enclave_sign.dir
+/root/thFHE-TEE/build/enclave/CMakeFiles/edit_cache.dir
+/root/thFHE-TEE/build/enclave/CMakeFiles/rebuild_cache.dir
+/root/thFHE-TEE/build/host/CMakeFiles/host_common.dir
+/root/thFHE-TEE/build/host/CMakeFiles/noise_party.dir
+/root/thFHE-TEE/build/host/CMakeFiles/noise_ctl.dir
+/root/thFHE-TEE/build/host/CMakeFiles/edit_cache.dir
+/root/thFHE-TEE/build/host/CMakeFiles/rebuild_cache.dir

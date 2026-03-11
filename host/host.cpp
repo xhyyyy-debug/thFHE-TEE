@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdlib>
 
 #include <openenclave/host.h>
 
@@ -70,7 +71,14 @@ public:
 
     void initialize()
     {
-        const uint32_t flags = oe_get_create_flags();
+        uint32_t flags = OE_ENCLAVE_FLAG_DEBUG;
+
+        const char* sim = std::getenv("OE_SIMULATION");
+        if (sim && std::string(sim) == "1")
+        {
+            flags |= OE_ENCLAVE_FLAG_SIMULATE;
+        }
+
         check_oe(
             oe_create_noise_enclave(
                 enclave_path_.c_str(),

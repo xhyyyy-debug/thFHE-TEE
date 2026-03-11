@@ -1,6 +1,7 @@
 enclave
 {
-    from "openenclave/edl/sgx/sgx.edl" import *;
+    from "openenclave/edl/syscall.edl" import *;
+    from "platform.edl" import *;
 
     struct share_package_t
     {
