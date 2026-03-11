@@ -12,7 +12,7 @@ namespace noise
 {
 constexpr algebra::Num kPrimeModulus = 2305843009213693951ULL;
 constexpr size_t kMaxParties = 16;
-constexpr size_t kMaxParallelBatch = 32;
+constexpr size_t kMaxParallelBatch = 1000;
 
 using Field = algebra::RuntimePrimeField;
 using Shamir = algebra::ShamirSecretSharing<kMaxParties, kMaxParties>;
@@ -120,7 +120,52 @@ public:
             }
         }
 
-        begin_batch(round_ids, batch_count);
+        bool round_mismatch = false;
+        if (active_batch_count_ == 0)
+        {
+            begin_batch(round_ids, batch_count);
+        }
+        else
+        {
+            if (active_batch_count_ != batch_count)
+            {
+                round_mismatch = true;
+            }
+            else
+            {
+                for (size_t i = 0; i < batch_count; ++i)
+                {
+                    if (active_round_ids_[i] != round_ids[i])
+                    {
+                        round_mismatch = true;
+                        break;
+                    }
+                }
+            }
+
+            if (round_mismatch)
+            {
+                bool any_received = false;
+                for (size_t i = 0; i < kMaxParallelBatch && !any_received; ++i)
+                {
+                    for (size_t j = 0; j < n_; ++j)
+                    {
+                        if (received_mask_[i][j])
+                        {
+                            any_received = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (any_received)
+                {
+                    return kInvalidArgument;
+                }
+
+                begin_batch(round_ids, batch_count);
+            }
+        }
         for (size_t batch_index = 0; batch_index < batch_count; ++batch_index)
         {
             generate_share_set(batch_index, packages + (batch_index * n_), sampled_secrets + batch_index);
@@ -146,19 +191,58 @@ public:
             return kInvalidArgument;
         }
 
-        if (active_batch_count_ == 0)
-        {
+        auto begin_from_shares = [&](size_t count) {
             std::array<uint64_t, kMaxParallelBatch> round_ids{};
-            for (size_t i = 0; i < batch_count; ++i)
+            for (size_t i = 0; i < count; ++i)
             {
                 round_ids[i] = shares[i].round_id;
             }
-            begin_batch(round_ids.data(), batch_count);
+            begin_batch(round_ids.data(), count);
+        };
+
+        if (active_batch_count_ == 0)
+        {
+            begin_from_shares(batch_count);
         }
 
+        bool round_mismatch = false;
         if (active_batch_count_ != batch_count)
         {
-            return kInvalidArgument;
+            round_mismatch = true;
+        }
+        else
+        {
+            for (size_t i = 0; i < batch_count; ++i)
+            {
+                if (active_round_ids_[i] != shares[i].round_id)
+                {
+                    round_mismatch = true;
+                    break;
+                }
+            }
+        }
+
+        if (round_mismatch)
+        {
+            bool any_received = false;
+            for (size_t i = 0; i < kMaxParallelBatch && !any_received; ++i)
+            {
+                for (size_t j = 0; j < n_; ++j)
+                {
+                    if (received_mask_[i][j])
+                    {
+                        any_received = true;
+                        break;
+                    }
+                }
+            }
+
+            if (any_received)
+            {
+                return kInvalidArgument;
+            }
+
+            begin_from_shares(batch_count);
         }
 
         for (size_t i = 0; i < batch_count; ++i)
@@ -187,7 +271,7 @@ public:
         return kOk;
     }
 
-    int done(SharePoint* aggregate) const
+    int done(SharePoint* aggregate)
     {
         if (aggregate == nullptr)
         {
@@ -197,7 +281,7 @@ public:
         return done_batch(aggregate, 1);
     }
 
-    int done_batch(SharePoint* aggregates, size_t batch_count) const
+    int done_batch(SharePoint* aggregates, size_t batch_count)
     {
         if (aggregates == nullptr || batch_count == 0 || batch_count > active_batch_count_)
         {
@@ -226,6 +310,7 @@ public:
             aggregates[batch_index].y = total;
         }
 
+        clear_round();
         return kOk;
     }
 

@@ -1,0 +1,17 @@
+# build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# binaries / logs
+*.o
+*.out
+*.a
+*.so
+*.log
+
+# keys
+*.pem
+*.key
+*.crt

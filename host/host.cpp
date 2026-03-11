@@ -111,6 +111,13 @@ public:
                 }
                 catch (const std::exception& ex)
                 {
+                    try
+                    {
+                        host::send_line(client_fd, std::string("ERR ") + ex.what());
+                    }
+                    catch (...)
+                    {
+                    }
                     log(std::string("client handling failed: ") + ex.what());
                 }
 
@@ -156,6 +163,7 @@ private:
     std::mutex mutex_;
     std::condition_variable round_cv_;
     std::mutex output_mutex_;
+    std::mutex enclave_mutex_;
     RoundState round_;
     std::array<std::array<bool, noise::kMaxParties>, noise::kMaxParallelBatch> chunk_received_from_{};
     std::array<std::array<bool, noise::kMaxParties>, noise::kMaxParallelBatch> chunk_acked_by_{};
@@ -253,6 +261,7 @@ private:
 
         for (uint64_t chunk_start = 0; chunk_start < batch_size; chunk_start += noise::kMaxParallelBatch)
         {
+            wait_for_peers_ready(round_id, chunk_start);
             const uint64_t chunk_size = std::min<uint64_t>(noise::kMaxParallelBatch, batch_size - chunk_start);
             GeneratedChunk chunk = generate_chunk(round_id, chunk_start, chunk_size);
             send_chunk(chunk_start, chunk);
@@ -289,16 +298,19 @@ private:
         chunk.local_secrets.assign(chunk_size, 0);
 
         int status = noise::kOk;
-        check_oe(
-            ecall_sharegen_batch(
-                enclave_,
-                &status,
-                chunk.round_ids.data(),
-                chunk.round_ids.size(),
-                reinterpret_cast<share_package_t*>(chunk.packages.data()),
-                chunk.packages.size(),
-                chunk.local_secrets.data()),
-            "ecall_sharegen_batch transport failed");
+        {
+            std::lock_guard<std::mutex> enclave_lock(enclave_mutex_);
+            check_oe(
+                ecall_sharegen_batch(
+                    enclave_,
+                    &status,
+                    chunk.round_ids.data(),
+                    chunk.round_ids.size(),
+                    reinterpret_cast<share_package_t*>(chunk.packages.data()),
+                    chunk.packages.size(),
+                    chunk.local_secrets.data()),
+                "ecall_sharegen_batch transport failed");
+        }
         check_status(status, "ecall_sharegen_batch rejected");
 
         {
@@ -338,6 +350,10 @@ private:
 
             log("chunk " + std::to_string(chunk_start) + ": sending batch shares to party " + std::to_string(receiver));
             const std::string reply = host::request_reply(peers_[receiver - 1], host::build_batch_share_message(message));
+            if (reply.empty())
+            {
+                throw std::runtime_error("Empty batch ack reply from party " + std::to_string(receiver));
+            }
             host::BatchAckMessage ack;
             if (!host::parse_batch_ack_message(reply, &ack))
             {
@@ -386,14 +402,17 @@ private:
         int status = noise::kOk;
 
         std::vector<noise::SharePackage> mutable_packages = packages;
-        check_oe(
-            ecall_store_batch(
-                enclave_,
-                &status,
-                reinterpret_cast<share_package_t*>(mutable_packages.data()),
-                mutable_packages.size(),
-                reinterpret_cast<ack_message_t*>(message.acks.data())),
-            "ecall_store_batch transport failed");
+        {
+            std::lock_guard<std::mutex> enclave_lock(enclave_mutex_);
+            check_oe(
+                ecall_store_batch(
+                    enclave_,
+                    &status,
+                    reinterpret_cast<share_package_t*>(mutable_packages.data()),
+                    mutable_packages.size(),
+                    reinterpret_cast<ack_message_t*>(message.acks.data())),
+                "ecall_store_batch transport failed");
+        }
         check_status(status, "ecall_store_batch rejected");
 
         {
@@ -462,14 +481,38 @@ private:
     {
         std::vector<noise::SharePoint> aggregates(round_.current_chunk_size);
         int status = noise::kOk;
-        check_oe(
-            ecall_done_batch(
-                enclave_,
-                &status,
-                reinterpret_cast<share_point_t*>(aggregates.data()),
-                aggregates.size()),
-            "ecall_done_batch transport failed");
-        check_status(status, "ecall_done_batch rejected");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+
+        while (true)
+        {
+            check_oe(
+                [&]() {
+                    std::lock_guard<std::mutex> enclave_lock(enclave_mutex_);
+                    return ecall_done_batch(
+                        enclave_,
+                        &status,
+                        reinterpret_cast<share_point_t*>(aggregates.data()),
+                        aggregates.size());
+                }(),
+                "ecall_done_batch transport failed");
+
+            if (status == noise::kOk)
+            {
+                break;
+            }
+
+            if (status != noise::kInsufficientShares)
+            {
+                check_status(status, "ecall_done_batch rejected");
+            }
+
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                check_status(status, "ecall_done_batch rejected");
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -589,6 +632,51 @@ private:
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         std::lock_guard<std::mutex> lock(output_mutex_);
         std::cout << "[" << ms << "][party " << party_id_ << "] " << message << std::endl;
+    }
+
+    void wait_for_peers_ready(uint64_t round_id, uint64_t chunk_start)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            bool ready = true;
+
+            for (size_t i = 0; i < peers_.size(); ++i)
+            {
+                if (static_cast<uint64_t>(i + 1) == party_id_)
+                {
+                    continue;
+                }
+
+                const std::string reply = host::request_reply(peers_[i], host::build_status_request());
+                host::StatusSnapshot status;
+                if (!host::parse_status_response(reply, &status))
+                {
+                    throw std::runtime_error("Invalid status reply from " + peers_[i].host + ": " + reply);
+                }
+
+                if (status.state == "ERROR")
+                {
+                    throw std::runtime_error("Peer entered ERROR state: party " + std::to_string(status.party_id));
+                }
+
+                if (status.round_id != round_id || status.completed_items != chunk_start)
+                {
+                    ready = false;
+                    break;
+                }
+            }
+
+            if (ready)
+            {
+                return;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+
+        throw std::runtime_error("Timed out waiting for peers to reach chunk start " + std::to_string(chunk_start));
     }
 };
 } // namespace
