@@ -14,45 +14,53 @@ services:
   party1:
     <<: *party-common
     container_name: noise-party-1
+    networks:
+      - noise-net
     ports:
-      - "7001:7000"
+      - "7005:7000"
     command: >
       /app/build/host/noise_party
       /app/build/enclave/noise_enclave.signed
-      /app/noise.conf
+      /app/noise.docker.conf
       party1
 
   party2:
     <<: *party-common
     container_name: noise-party-2
+    networks:
+      - noise-net
     ports:
-      - "7002:7000"
+      - "7006:7000"
     command: >
       /app/build/host/noise_party
       /app/build/enclave/noise_enclave.signed
-      /app/noise.conf
+      /app/noise.docker.conf
       party2
 
   party3:
     <<: *party-common
     container_name: noise-party-3
+    networks:
+      - noise-net
     ports:
-      - "7003:7000"
+      - "7007:7000"
     command: >
       /app/build/host/noise_party
       /app/build/enclave/noise_enclave.signed
-      /app/noise.conf
+      /app/noise.docker.conf
       party3
 
   party4:
     <<: *party-common
     container_name: noise-party-4
+    networks:
+      - noise-net
     ports:
-      - "7004:7000"
+      - "7008:7000"
     command: >
       /app/build/host/noise_party
       /app/build/enclave/noise_enclave.signed
-      /app/noise.conf
+      /app/noise.docker.conf
       party4
 
   controller:
@@ -60,6 +68,12 @@ services:
     container_name: noise-controller
     profiles:
       - tools
+    networks:
+      - noise-net
     command: >
       /app/build/host/noise_ctl
-      1 1 /app/noise.conf
+      1 1 /app/noise.docker.conf
+
+networks:
+  noise-net:
+    driver: bridge
