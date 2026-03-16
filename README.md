@@ -50,3 +50,24 @@ docker compose down
 ```bash
 OE_SIMULATION=1 docker compose up
 ```
+
+## Typical Workflow
+
+1. `docker compose build`
+2. `docker compose up`
+3. `docker compose run --rm controller 1 1000000 /app/noise.docker.conf`
+4. `docker compose down`
+
+## Large Experiments (Batched)
+
+Run a large experiment by splitting it into batches:
+
+```bash
+docker compose run --rm controller 1 26469202 100000 /app/noise.docker.conf
+```
+
+Disable full verification for speed/bandwidth:
+
+```bash
+NOISE_VERIFY=0 docker compose run --rm controller 1 26469202 100000 /app/noise.docker.conf
+```

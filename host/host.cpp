@@ -212,6 +212,12 @@ private:
 
         if (host::is_status_request(request))
         {
+            host::send_line(client_fd, host::build_status_response_summary(snapshot()));
+            return;
+        }
+
+        if (host::is_status_request_full(request))
+        {
             host::send_line(client_fd, host::build_status_response(snapshot()));
             return;
         }
@@ -628,6 +634,20 @@ private:
 
     void log(const std::string& message)
     {
+        static const bool verbose = []() {
+            const char* env = std::getenv("NOISE_LOG_VERBOSE");
+            return env != nullptr && std::string(env) == "1";
+        }();
+
+        if (!verbose)
+        {
+            if (message.rfind("subround ", 0) == 0 ||
+                message.rfind("chunk ", 0) == 0)
+            {
+                return;
+            }
+        }
+
         const auto now = std::chrono::system_clock::now().time_since_epoch();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
         std::lock_guard<std::mutex> lock(output_mutex_);

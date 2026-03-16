@@ -59,7 +59,7 @@ services:
     networks:
       - noise-net
     entrypoint: ["/app/build/host/noise_ctl"]
-    command: ["1", "10000", "/app/noise.docker.conf"]
+    command: ["1", "26469202", "100000", "/app/noise.docker.conf"]
 
 networks:
   noise-net:

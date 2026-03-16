@@ -73,6 +73,16 @@ inline bool is_status_request(const std::string& line)
     return line == "STATUS";
 }
 
+inline std::string build_status_request_full()
+{
+    return "STATUS_FULL";
+}
+
+inline bool is_status_request_full(const std::string& line)
+{
+    return line == "STATUS_FULL";
+}
+
 inline std::string build_share_message(const noise::SharePackage& share)
 {
     std::ostringstream output;
@@ -324,6 +334,25 @@ inline std::string build_status_response(const StatusSnapshot& status)
            << status.success << ' '
            << secrets.str() << ' '
            << aggregates.str();
+    return output.str();
+}
+
+inline std::string build_status_response_summary(const StatusSnapshot& status)
+{
+    std::ostringstream output;
+    output << "STATUS "
+           << status.party_id << ' '
+           << status.round_id << ' '
+           << status.batch_size << ' '
+           << status.state << ' '
+           << status.current_item << ' '
+           << status.completed_items << ' '
+           << status.received_shares << ' '
+           << status.ack_count << ' '
+           << status.expected_shares << ' '
+           << status.success << ' '
+           << "-" << ' '
+           << "-";
     return output.str();
 }
 
