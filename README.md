@@ -1,0 +1,52 @@
+# TEE + MPC Noise Demo
+
+This repo builds a simple multi-party noise generation protocol running inside Open Enclave (SGX). The recommended way to run multi-party tests is via Docker Compose.
+
+## Docker Quick Start
+
+### 1) Build the images
+
+```bash
+docker compose build
+```
+
+### 2) Start 4 parties (one container per party)
+
+```bash
+docker compose up
+```
+
+This starts `party1`..`party4` on a dedicated `bridge` network (`noise-net`). Each party runs its own enclave.
+
+### 3) Run the controller (batch runner)
+
+Use the `tools` profile to run the controller container.
+
+```bash
+docker compose --profile tools up controller
+```
+
+The controller command is configured in `docker-compose.yml` and uses `noise.docker.conf`.
+
+### 4) Stop everything
+
+```bash
+docker compose down
+```
+
+## Config Files
+
+- `noise.conf`: local (non-Docker) config using `127.0.0.1`
+- `noise.docker.conf`: Docker config using service names (`party1`..`party4`) and internal port `7000`
+
+## Notes
+
+- This Docker setup uses `bridge` networking. Each container gets its own IP automatically.
+- SGX devices are mapped in `docker-compose.yml`:
+  - `/dev/sgx_enclave`
+  - `/dev/sgx_provision`
+- If you want to run in simulation mode, set:
+
+```bash
+OE_SIMULATION=1 docker compose up
+```
