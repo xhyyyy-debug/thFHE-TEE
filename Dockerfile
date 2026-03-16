@@ -59,11 +59,11 @@ RUN if [ ! -f /app/enclave/private.pem ]; then \
     fi
 
 # 确认 Open Enclave 配置文件位置
-RUN find / -name "openenclave-config.cmake" 2>/dev/null || true
+# RUN find / -name "openenclave-config.cmake" 2>/dev/null || true
 
 # 告诉 CMake 去哪里找 Open Enclave
-ENV OpenEnclave_DIR=/opt/openenclave/lib/openenclave/cmake
-ENV CMAKE_PREFIX_PATH=/opt/openenclave/lib/openenclave/cmake
+# ENV OpenEnclave_DIR=/opt/openenclave/lib/openenclave/cmake
+# ENV CMAKE_PREFIX_PATH=/opt/openenclave/lib/openenclave/cmake
 
 RUN cmake -S /app -B /app/build -G Ninja
 

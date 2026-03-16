@@ -1,5 +1,6 @@
 #include <chrono>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -15,6 +16,25 @@ namespace
 uint64_t parse_u64(const char* text)
 {
     return std::stoull(text);
+}
+
+std::string format_duration(std::chrono::seconds seconds)
+{
+    const auto total = seconds.count();
+    const auto hours = total / 3600;
+    const auto minutes = (total % 3600) / 60;
+    const auto secs = total % 60;
+    std::ostringstream out;
+    if (hours > 0)
+    {
+        out << hours << "h";
+    }
+    if (hours > 0 || minutes > 0)
+    {
+        out << minutes << "m";
+    }
+    out << secs << "s";
+    return out.str();
 }
 } // namespace
 
@@ -42,11 +62,14 @@ int main(int argc, const char* argv[])
         }
 
         std::vector<host::StatusSnapshot> snapshots(party_count);
+        const auto monitor_start = std::chrono::steady_clock::now();
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        uint64_t next_generation_mark = 5;
 
         while (std::chrono::steady_clock::now() < deadline)
         {
             bool all_done = true;
+            uint64_t min_completed = batch_size;
             for (size_t i = 0; i < peers.size(); ++i)
             {
                 const std::string reply = host::request_reply(peers[i], host::build_status_request());
@@ -56,6 +79,31 @@ int main(int argc, const char* argv[])
                 }
 
                 all_done = all_done && snapshots[i].state == "DONE" && snapshots[i].completed_items == batch_size;
+                min_completed = std::min(min_completed, snapshots[i].completed_items);
+            }
+
+            const uint64_t percent = (min_completed * 100) / batch_size;
+            if (percent >= next_generation_mark || all_done)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - monitor_start);
+                std::chrono::seconds eta(0);
+                if (min_completed > 0 && elapsed.count() > 0)
+                {
+                    const auto total_est = (elapsed.count() * batch_size) / min_completed;
+                    const auto remain = total_est > elapsed.count() ? total_est - elapsed.count() : 0;
+                    eta = std::chrono::seconds(remain);
+                }
+
+                std::cout << "Generation " << percent << "% (" << min_completed << "/" << batch_size << ")"
+                          << " elapsed=" << format_duration(elapsed)
+                          << " eta=" << format_duration(eta)
+                          << std::endl;
+
+                while (next_generation_mark <= percent)
+                {
+                    next_generation_mark += 5;
+                }
             }
 
             if (all_done)
@@ -87,6 +135,8 @@ int main(int argc, const char* argv[])
         }
 
         bool success = true;
+        const auto verify_start = std::chrono::steady_clock::now();
+        uint64_t next_progress_mark = 5;
         for (uint64_t item = 0; item < batch_size; ++item)
         {
             std::vector<noise::SharePoint> aggregate_shares;
@@ -113,11 +163,30 @@ int main(int argc, const char* argv[])
             const bool item_success = reconstructed == expected_noise;
             success = success && item_success;
 
-            std::cout << "Batch item " << item
-                      << ": reconstructed=" << reconstructed
-                      << " expected=" << expected_noise
-                      << " verification=" << (item_success ? "SUCCESS" : "FAILED")
-                      << std::endl;
+            const uint64_t completed = item + 1;
+            const uint64_t percent = (completed * 100) / batch_size;
+            if (percent >= next_progress_mark || completed == batch_size)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - verify_start);
+                std::chrono::seconds eta(0);
+                if (completed > 0 && elapsed.count() > 0)
+                {
+                    const auto total_est = (elapsed.count() * batch_size) / completed;
+                    const auto remain = total_est > elapsed.count() ? total_est - elapsed.count() : 0;
+                    eta = std::chrono::seconds(remain);
+                }
+
+                std::cout << "Verify " << percent << "% (" << completed << "/" << batch_size << ")"
+                          << " elapsed=" << format_duration(elapsed)
+                          << " eta=" << format_duration(eta)
+                          << std::endl;
+
+                while (next_progress_mark <= percent)
+                {
+                    next_progress_mark += 5;
+                }
+            }
         }
 
         std::cout << "Batch verification: " << (success ? "SUCCESS" : "FAILED") << std::endl;
