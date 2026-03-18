@@ -5,6 +5,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "../enclave/prog_mpc.h"
+
 namespace host
 {
 namespace
@@ -78,6 +80,18 @@ RuntimeConfig load_runtime_config(const std::string& path)
             continue;
         }
 
+        if (key == "noise_degree")
+        {
+            config.noise_degree = std::stoull(value);
+            continue;
+        }
+
+        if (key == "noise_bound_bits")
+        {
+            config.noise_bound_bits = static_cast<uint32_t>(std::stoul(value));
+            continue;
+        }
+
         if (key == "party")
         {
             const auto parts = split(value, ',');
@@ -111,6 +125,21 @@ RuntimeConfig load_runtime_config(const std::string& path)
     if (config.threshold >= config.party_count)
     {
         throw std::runtime_error("Config threshold must be smaller than party_count");
+    }
+
+    if (config.noise_degree == 0)
+    {
+        throw std::runtime_error("Config noise_degree must be positive");
+    }
+
+    if (config.noise_degree > noise::kMaxParallelBatch)
+    {
+        throw std::runtime_error("Config noise_degree exceeds max batch size: " + std::to_string(noise::kMaxParallelBatch));
+    }
+
+    if (config.noise_bound_bits == 0 || config.noise_bound_bits > 126)
+    {
+        throw std::runtime_error("Config noise_bound_bits must be in [1, 126]");
     }
 
     std::vector<uint64_t> ids;

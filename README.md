@@ -39,6 +39,18 @@ docker compose down
 - `noise.conf`: local (non-Docker) config using `127.0.0.1`
 - `noise.docker.conf`: Docker config using service names (`party1`..`party4`) and internal port `7000`
 
+### Noise Parameters
+
+Add TFHE noise parameters in the config file:
+
+```
+noise_degree = 1024
+noise_bound_bits = 8
+```
+
+`noise_degree` maps to the batch size and should match the ring degree (number of coefficients in one ring element).
+`noise_bound_bits` controls the TUniform noise bound `2^b`.
+
 ## Notes
 
 - This Docker setup uses `bridge` networking. Each container gets its own IP automatically.

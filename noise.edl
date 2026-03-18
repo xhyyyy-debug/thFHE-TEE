@@ -3,13 +3,24 @@ enclave
     from "openenclave/edl/syscall.edl" import *;
     from "platform.edl" import *;
 
+    struct z128_t
+    {
+        uint64_t lo;
+        uint64_t hi;
+    };
+
+    struct ring_element_t
+    {
+        z128_t coeffs[4];
+    };
+
     struct share_package_t
     {
         uint64_t round_id;
         uint64_t sender_id;
         uint64_t receiver_id;
         uint64_t share_x;
-        uint64_t share_y;
+        ring_element_t share_y;
         uint64_t sigma;
     };
 
@@ -25,7 +36,7 @@ enclave
     struct share_point_t
     {
         uint64_t x;
-        uint64_t y;
+        ring_element_t y;
     };
 
     trusted
@@ -33,20 +44,21 @@ enclave
         public int ecall_init_party(
             uint64_t party_id,
             uint64_t party_count,
-            uint64_t threshold);
+            uint64_t threshold,
+            uint32_t noise_bound_bits);
 
         public int ecall_sharegen(
             uint64_t round_id,
             [out, count=package_count] share_package_t* packages,
             size_t package_count,
-            [out] uint64_t* sampled_secret);
+            [out] ring_element_t* sampled_secret);
 
         public int ecall_sharegen_batch(
             [in, count=batch_count] uint64_t* round_ids,
             size_t batch_count,
             [out, count=package_count] share_package_t* packages,
             size_t package_count,
-            [out, count=batch_count] uint64_t* sampled_secrets);
+            [out, count=batch_count] ring_element_t* sampled_secrets);
 
         public int ecall_store(
             [in] share_package_t* package,

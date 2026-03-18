@@ -20,6 +20,8 @@ struct RuntimeConfig
 {
     uint64_t party_count = 0;
     uint64_t threshold = 0;
+    uint64_t noise_degree = 1;
+    uint32_t noise_bound_bits = 8;
     std::vector<PartyConfig> parties;
 };
 

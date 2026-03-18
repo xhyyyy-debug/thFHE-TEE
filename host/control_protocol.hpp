@@ -2,6 +2,7 @@
 #define HOST_CONTROL_PROTOCOL_HPP
 
 #include <cstdint>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -24,12 +25,59 @@ struct StatusSnapshot
     uint64_t ack_count = 0;
     uint64_t expected_shares = 0;
     uint64_t success = 0;
-    std::vector<uint64_t> local_secrets;
+    std::vector<noise::RingElementRaw> local_secrets;
     std::vector<noise::SharePoint> aggregates;
 };
 
 inline std::vector<std::string> split_csv(const std::string& text);
 inline std::vector<std::string> split(const std::string& text, char separator);
+
+inline std::string encode_u64_hex(uint64_t value)
+{
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << value;
+    return out.str();
+}
+
+inline uint64_t decode_u64_hex(const std::string& value)
+{
+    return std::stoull(value, nullptr, 16);
+}
+
+inline std::string encode_ring(const noise::RingElementRaw& value)
+{
+    std::ostringstream out;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        if (i != 0)
+        {
+            out << '.';
+        }
+        out << encode_u64_hex(value.coeffs[i].lo) << '.'
+            << encode_u64_hex(value.coeffs[i].hi);
+    }
+    return out.str();
+}
+
+inline bool decode_ring(const std::string& text, noise::RingElementRaw* out)
+{
+    if (out == nullptr)
+    {
+        return false;
+    }
+    const auto parts = split(text, '.');
+    if (parts.size() != 8)
+    {
+        return false;
+    }
+    size_t idx = 0;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        out->coeffs[i].lo = decode_u64_hex(parts[idx++]);
+        out->coeffs[i].hi = decode_u64_hex(parts[idx++]);
+    }
+    return true;
+}
 
 struct BatchShareMessage
 {
@@ -91,7 +139,7 @@ inline std::string build_share_message(const noise::SharePackage& share)
            << share.sender_id << ' '
            << share.receiver_id << ' '
            << share.share_x << ' '
-           << share.share_y << ' '
+           << encode_ring(share.share_y) << ' '
            << share.sigma;
     return output.str();
 }
@@ -112,7 +160,7 @@ inline std::string build_batch_share_message(const BatchShareMessage& message)
                << share.sender_id << ','
                << share.receiver_id << ','
                << share.share_x << ','
-               << share.share_y << ','
+               << encode_ring(share.share_y) << ','
                << share.sigma;
     }
     return output.str();
@@ -155,13 +203,17 @@ inline bool parse_batch_share_message(const std::string& line, BatchShareMessage
             return false;
         }
 
-        message->packages.push_back(
-            {std::stoull(fields[0]),
-             std::stoull(fields[1]),
-             std::stoull(fields[2]),
-             std::stoull(fields[3]),
-             std::stoull(fields[4]),
-             std::stoull(fields[5])});
+        noise::SharePackage share{};
+        share.round_id = std::stoull(fields[0]);
+        share.sender_id = std::stoull(fields[1]);
+        share.receiver_id = std::stoull(fields[2]);
+        share.share_x = std::stoull(fields[3]);
+        if (!decode_ring(fields[4], &share.share_y))
+        {
+            return false;
+        }
+        share.sigma = std::stoull(fields[5]);
+        message->packages.push_back(share);
     }
 
     return true;
@@ -176,13 +228,17 @@ inline bool parse_share_message(const std::string& line, noise::SharePackage* sh
         return false;
     }
 
-    return static_cast<bool>(
-        input >> share->round_id
-              >> share->sender_id
-              >> share->receiver_id
-              >> share->share_x
-              >> share->share_y
-              >> share->sigma);
+    std::string ring_text;
+    if (!(input >> share->round_id
+                >> share->sender_id
+                >> share->receiver_id
+                >> share->share_x
+                >> ring_text
+                >> share->sigma))
+    {
+        return false;
+    }
+    return decode_ring(ring_text, &share->share_y);
 }
 
 inline std::string build_ack_message(const noise::AckMessage& ack)
@@ -301,7 +357,7 @@ inline std::string build_status_response(const StatusSnapshot& status)
             {
                 secrets << ",";
             }
-            secrets << status.local_secrets[i];
+            secrets << encode_ring(status.local_secrets[i]);
         }
     }
 
@@ -317,7 +373,7 @@ inline std::string build_status_response(const StatusSnapshot& status)
             {
                 aggregates << ",";
             }
-            aggregates << status.aggregates[i].x << ":" << status.aggregates[i].y;
+            aggregates << status.aggregates[i].x << ":" << encode_ring(status.aggregates[i].y);
         }
     }
 
@@ -390,7 +446,12 @@ inline bool parse_status_response(const std::string& line, StatusSnapshot* statu
     {
         for (const auto& part : split_csv(secrets))
         {
-            status->local_secrets.push_back(std::stoull(part));
+            noise::RingElementRaw value{};
+            if (!decode_ring(part, &value))
+            {
+                return false;
+            }
+            status->local_secrets.push_back(value);
         }
     }
 
@@ -404,8 +465,13 @@ inline bool parse_status_response(const std::string& line, StatusSnapshot* statu
                 return false;
             }
 
-            status->aggregates.push_back(
-                {std::stoull(part.substr(0, pos)), std::stoull(part.substr(pos + 1))});
+            noise::SharePoint point{};
+            point.x = std::stoull(part.substr(0, pos));
+            if (!decode_ring(part.substr(pos + 1), &point.y))
+            {
+                return false;
+            }
+            status->aggregates.push_back(point);
         }
     }
 

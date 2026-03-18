@@ -60,9 +60,10 @@ int main(int argc, const char* argv[])
         std::cerr << std::endl;
     }
 
-    if (argc < 4)
+    if (argc < 3)
     {
-        // std::cerr << "Usage: noise_ctl <round_id> <batch_size> <config_path>" << std::endl;
+        std::cerr << "Usage: noise_ctl <round_id> <config_path>" << std::endl;
+        std::cerr << "   or: noise_ctl <round_id> <batch_size> <config_path>" << std::endl;
         std::cerr << "   or: noise_ctl <round_id> <total_size> <batch_size> <config_path>" << std::endl;
         return 1;
     }
@@ -80,19 +81,29 @@ int main(int argc, const char* argv[])
             batch_size = parse_u64(argv[3]);
             config_path = argv[4];
         }
-        else
+        else if (argc == 4)
         {
             total_size = parse_u64(argv[2]);
             batch_size = total_size;
             config_path = argv[3];
         }
-
-        if (total_size == 0 || batch_size == 0)
+        else
         {
-            throw std::runtime_error("total_size and batch_size must be positive");
+            config_path = argv[2];
         }
 
         const auto config = host::load_runtime_config(config_path);
+
+        if (batch_size == 0)
+        {
+            batch_size = config.noise_degree;
+            total_size = batch_size;
+        }
+        else if (total_size == 0)
+        {
+            total_size = batch_size;
+        }
+
         const uint64_t party_count = config.party_count;
         const uint64_t threshold = config.threshold;
         const auto peers = host::endpoints_from_config(config);
@@ -209,7 +220,7 @@ int main(int argc, const char* argv[])
                 {
                     std::vector<noise::SharePoint> aggregate_shares;
                     aggregate_shares.reserve(threshold + 1);
-                    uint64_t expected_noise = 0;
+                    noise::RingElementRaw expected_noise{};
 
                     for (size_t i = 0; i < snapshots.size(); ++i)
                     {
@@ -218,17 +229,17 @@ int main(int argc, const char* argv[])
                             throw std::runtime_error("Incomplete batch results from party " + std::to_string(snapshots[i].party_id));
                         }
 
-                        expected_noise = noise::mod_add(expected_noise, snapshots[i].local_secrets[item]);
+                        expected_noise = noise::ring_add(expected_noise, snapshots[i].local_secrets[item]);
                         if (aggregate_shares.size() < threshold + 1)
                         {
                             aggregate_shares.push_back(snapshots[i].aggregates[item]);
                         }
                     }
 
-                    const uint64_t reconstructed = noise::ProgMPCHandler::reconstruct_secret(
+                    const noise::RingElementRaw reconstructed = noise::ProgMPCHandler::reconstruct_secret(
                         aggregate_shares.data(),
                         aggregate_shares.size());
-                    const bool item_success = reconstructed == expected_noise;
+                    const bool item_success = noise::ring_equal(reconstructed, expected_noise);
                     success = success && item_success;
 
                     const uint64_t completed = item + 1;

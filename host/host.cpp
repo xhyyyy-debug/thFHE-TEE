@@ -53,12 +53,14 @@ public:
         uint64_t party_id,
         uint64_t party_count,
         uint64_t threshold,
+        uint32_t noise_bound_bits,
         uint16_t listen_port,
         std::vector<host::Endpoint> peers)
         : enclave_path_(std::move(enclave_path)),
           party_id_(party_id),
           party_count_(party_count),
           threshold_(threshold),
+          noise_bound_bits_(noise_bound_bits),
           listen_port_(listen_port),
           peers_(std::move(peers))
     {
@@ -91,7 +93,7 @@ public:
 
         int status = noise::kOk;
         check_oe(
-            ecall_init_party(enclave_, &status, party_id_, party_count_, threshold_),
+            ecall_init_party(enclave_, &status, party_id_, party_count_, threshold_, noise_bound_bits_),
             "ecall_init_party transport failed");
         check_status(status, "ecall_init_party rejected");
 
@@ -140,7 +142,7 @@ private:
         std::vector<uint64_t> current_chunk_received_counts;
         std::vector<uint64_t> current_chunk_ack_counts;
         bool current_chunk_done = false;
-        std::vector<uint64_t> local_secrets;
+        std::vector<noise::RingElementRaw> local_secrets;
         std::vector<noise::SharePoint> aggregates;
     };
 
@@ -148,13 +150,14 @@ private:
     {
         std::vector<uint64_t> round_ids;
         std::vector<noise::SharePackage> packages;
-        std::vector<uint64_t> local_secrets;
+        std::vector<noise::RingElementRaw> local_secrets;
     };
 
     std::string enclave_path_;
     uint64_t party_id_;
     uint64_t party_count_;
     uint64_t threshold_;
+    uint32_t noise_bound_bits_;
     uint16_t listen_port_;
     std::vector<host::Endpoint> peers_;
     oe_enclave_t* enclave_ = nullptr;
@@ -301,7 +304,7 @@ private:
         }
 
         chunk.packages.resize(static_cast<size_t>(chunk_size * party_count_));
-        chunk.local_secrets.assign(chunk_size, 0);
+        chunk.local_secrets.assign(chunk_size, noise::RingElementRaw{});
 
         int status = noise::kOk;
         {
@@ -576,7 +579,7 @@ private:
         round_.batch_round_id = round_id;
         round_.batch_size = batch_size;
         round_.state = "WAITING";
-        round_.local_secrets.assign(batch_size, 0);
+        round_.local_secrets.assign(batch_size, noise::RingElementRaw{});
         round_.aggregates.assign(batch_size, noise::SharePoint{});
         clear_chunk_tracking_locked();
     }
@@ -723,6 +726,7 @@ int main(int argc, const char* argv[])
             self.id,
             config.party_count,
             config.threshold,
+            config.noise_bound_bits,
             self.endpoint.port,
             peers);
         party.initialize();

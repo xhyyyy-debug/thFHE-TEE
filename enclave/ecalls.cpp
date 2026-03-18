@@ -14,22 +14,23 @@ ProgMPCHandler g_handler;
 extern "C" int ecall_init_party(
     uint64_t party_id,
     uint64_t party_count,
-    uint64_t threshold)
+    uint64_t threshold,
+    uint32_t noise_bound_bits)
 {
-    return g_handler.init(party_id, party_count, threshold);
+    return g_handler.init(party_id, party_count, threshold, noise_bound_bits);
 }
 
 extern "C" int ecall_sharegen(
     uint64_t round_id,
     share_package_t* packages,
     size_t package_count,
-    uint64_t* sampled_secret)
+    ring_element_t* sampled_secret)
 {
     return g_handler.sharegen(
         round_id,
         reinterpret_cast<SharePackage*>(packages),
         package_count,
-        reinterpret_cast<noise::ShareValue*>(sampled_secret));
+        reinterpret_cast<noise::RingElementRaw*>(sampled_secret));
 }
 
 extern "C" int ecall_sharegen_batch(
@@ -37,14 +38,14 @@ extern "C" int ecall_sharegen_batch(
     size_t batch_count,
     share_package_t* packages,
     size_t package_count,
-    uint64_t* sampled_secrets)
+    ring_element_t* sampled_secrets)
 {
     return g_handler.sharegen_batch(
         round_ids,
         batch_count,
         reinterpret_cast<SharePackage*>(packages),
         package_count,
-        reinterpret_cast<noise::ShareValue*>(sampled_secrets));
+        reinterpret_cast<noise::RingElementRaw*>(sampled_secrets));
 }
 
 extern "C" int ecall_store(
