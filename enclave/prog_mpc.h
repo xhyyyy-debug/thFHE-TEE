@@ -421,7 +421,7 @@ private:
         t_ = 0;
         active_batch_count_ = 0;
         prng_state_ = 0;
-        last_secret_ = 0;
+        last_secret_ = RingElementRaw{};
         clear_round();
     }
 
@@ -555,7 +555,7 @@ private:
             static_cast<size_t>(n_),
             static_cast<size_t>(t_),
             [this]() {
-                return RingElement::sample([this]() { return sample_tuniform_z128(); });
+                return sample_tuniform_z128();
             });
 
         last_secret_ = RingElementRaw{};

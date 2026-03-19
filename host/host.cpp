@@ -317,7 +317,7 @@ private:
                     chunk.round_ids.size(),
                     reinterpret_cast<share_package_t*>(chunk.packages.data()),
                     chunk.packages.size(),
-                    chunk.local_secrets.data()),
+                    reinterpret_cast<ring_element_t*>(chunk.local_secrets.data())),
                 "ecall_sharegen_batch transport failed");
         }
         check_status(status, "ecall_sharegen_batch rejected");

@@ -187,6 +187,13 @@ inline uint8_t gf16_inv(uint8_t a)
     return gf16_pow(a, 14);
 }
 
+struct ResiduePolyF4Z128;
+
+inline ResiduePolyF4Z128 operator+(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
+inline ResiduePolyF4Z128 operator-(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
+inline ResiduePolyF4Z128 operator-(ResiduePolyF4Z128 value);
+inline ResiduePolyF4Z128 operator*(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
+
 struct ResiduePolyF4Z128
 {
     std::array<Z128, 4> coefs{};
