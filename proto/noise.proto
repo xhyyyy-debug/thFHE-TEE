@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package noise_rpc;
+
+message Z128Raw {
+  uint64 lo = 1;
+  uint64 hi = 2;
+}
+
+message RingElementRaw {
+  repeated Z128Raw coeffs = 1;
+}
+
+message SharePackage {
+  uint64 round_id = 1;
+  uint64 sender_id = 2;
+  uint64 receiver_id = 3;
+  uint64 share_x = 4;
+  RingElementRaw share_y = 5;
+  uint64 sigma = 6;
+}
+
+message AckMessage {
+  uint64 round_id = 1;
+  uint64 acking_party = 2;
+  uint64 for_sender = 3;
+  uint64 sigma = 4;
+  uint64 accepted = 5;
+}
+
+message SharePoint {
+  uint64 x = 1;
+  RingElementRaw y = 2;
+}
+
+message StartRequest {
+  uint64 round_id = 1;
+  uint64 batch_size = 2;
+}
+
+message StartReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+message BatchShareRequest {
+  repeated SharePackage packages = 1;
+}
+
+message BatchAckReply {
+  repeated AckMessage acks = 1;
+}
+
+message StatusRequest {
+  bool full = 1;
+}
+
+message StatusReply {
+  uint64 party_id = 1;
+  uint64 round_id = 2;
+  uint64 batch_size = 3;
+  string state = 4;
+  uint64 current_item = 5;
+  uint64 completed_items = 6;
+  uint64 received_shares = 7;
+  uint64 ack_count = 8;
+  uint64 expected_shares = 9;
+  uint64 success = 10;
+  repeated RingElementRaw local_secrets = 11;
+  repeated SharePoint aggregates = 12;
+}
+
+service NoiseParty {
+  rpc StartRound(StartRequest) returns (StartReply);
+  rpc BatchShare(BatchShareRequest) returns (BatchAckReply);
+  rpc Status(StatusRequest) returns (StatusReply);
+}

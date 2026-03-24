@@ -4,13 +4,21 @@ This repo builds a simple multi-party noise generation protocol running inside O
 
 ## Docker Quick Start
 
-### 1) Build the images
+Make sure that you have downloaded openenclave images in thirdparty floder.
+
+### 1) Build the base images
 
 ```bash
-docker compose build
+docker compose --profile base build base
 ```
 
-### 2) Start 4 parties (one container per party)
+### 2) build images
+
+```bash
+docker compose build 
+```
+
+### 3) Start 4 parties (one container per party)
 
 ```bash
 docker compose up
@@ -18,7 +26,7 @@ docker compose up
 
 This starts `party1`..`party4` on a dedicated `bridge` network (`noise-net`). Each party runs its own enclave.
 
-### 3) Run the controller (batch runner)
+### 4) Run the controller (batch runner)
 
 Use the `tools` profile to run the controller container.
 
@@ -28,7 +36,7 @@ docker compose --profile tools up controller
 
 The controller command is configured in `docker-compose.yml` and uses `noise.docker.conf`.
 
-### 4) Stop everything
+### 5) Stop everything
 
 ```bash
 docker compose down

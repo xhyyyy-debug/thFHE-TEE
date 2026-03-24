@@ -9,12 +9,13 @@
 #include <vector>
 #include <cstdlib>
 
+#include <grpcpp/grpcpp.h>
 #include <openenclave/host.h>
 
 #include "../enclave/prog_mpc.h"
 #include "config.hpp"
 #include "control_protocol.hpp"
-#include "network.hpp"
+#include "grpc_utils.hpp"
 #include "noise_u.h"
 
 namespace
@@ -61,8 +62,8 @@ public:
           party_count_(party_count),
           threshold_(threshold),
           noise_bound_bits_(noise_bound_bits),
-          listen_port_(listen_port),
-          peers_(std::move(peers))
+        listen_port_(listen_port),
+        peers_(std::move(peers))
     {
     }
 
@@ -96,37 +97,21 @@ public:
             ecall_init_party(enclave_, &status, party_id_, party_count_, threshold_, noise_bound_bits_),
             "ecall_init_party transport failed");
         check_status(status, "ecall_init_party rejected");
-
-        listen_fd_ = host::create_listen_socket(listen_port_);
-        log("listening on port " + std::to_string(listen_port_));
+        init_channels();
+        log("grpc listening on port " + std::to_string(listen_port_));
     }
 
-    void serve_forever()
+    void StartRound(uint64_t round_id, uint64_t batch_size)
     {
-        while (true)
-        {
-            const int client_fd = host::accept_client(listen_fd_);
-            std::thread([this, client_fd]() {
-                try
-                {
-                    handle_client(client_fd);
-                }
-                catch (const std::exception& ex)
-                {
-                    try
-                    {
-                        host::send_line(client_fd, std::string("ERR ") + ex.what());
-                    }
-                    catch (...)
-                    {
-                    }
-                    log(std::string("client handling failed: ") + ex.what());
-                }
-
-                host::close_socket(client_fd);
-            }).detach();
-        }
+        start_round(round_id, batch_size);
     }
+
+    host::BatchAckMessage HandleBatchSharePackages(const std::vector<noise::SharePackage>& packages)
+    {
+        return handle_batch_share_packages(packages);
+    }
+
+    host::StatusSnapshot GetStatus() { return snapshot(); }
 
 private:
     struct RoundState
@@ -160,8 +145,8 @@ private:
     uint32_t noise_bound_bits_;
     uint16_t listen_port_;
     std::vector<host::Endpoint> peers_;
+    std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs_;
     oe_enclave_t* enclave_ = nullptr;
-    int listen_fd_ = -1;
 
     std::mutex mutex_;
     std::condition_variable round_cv_;
@@ -178,54 +163,18 @@ private:
             oe_terminate_enclave(enclave_);
             enclave_ = nullptr;
         }
-
-        if (listen_fd_ >= 0)
-        {
-            host::close_socket(listen_fd_);
-            listen_fd_ = -1;
-        }
     }
 
-    void handle_client(int client_fd)
+    void init_channels()
     {
-        const std::string request = host::recv_line(client_fd);
-        if (request.empty())
+        stubs_.clear();
+        stubs_.reserve(peers_.size());
+        for (const auto& peer : peers_)
         {
-            host::send_line(client_fd, "ERR empty request");
-            return;
+            const std::string target = host::endpoint_to_target(peer);
+            auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
+            stubs_.push_back(noise_rpc::NoiseParty::NewStub(channel));
         }
-
-        uint64_t round_id = 0;
-        uint64_t batch_size = 0;
-        host::BatchShareMessage batch_share;
-
-        if (host::parse_start_message(request, &round_id, &batch_size))
-        {
-            start_round(round_id, batch_size);
-            host::send_line(client_fd, "OK STARTED " + std::to_string(round_id) + " " + std::to_string(batch_size));
-            return;
-        }
-
-        if (host::parse_batch_share_message(request, &batch_share))
-        {
-            const host::BatchAckMessage batch_ack = handle_batch_share_request(batch_share);
-            host::send_line(client_fd, host::build_batch_ack_message(batch_ack));
-            return;
-        }
-
-        if (host::is_status_request(request))
-        {
-            host::send_line(client_fd, host::build_status_response_summary(snapshot()));
-            return;
-        }
-
-        if (host::is_status_request_full(request))
-        {
-            host::send_line(client_fd, host::build_status_response(snapshot()));
-            return;
-        }
-
-        host::send_line(client_fd, "ERR unknown request");
     }
 
     void start_round(uint64_t round_id, uint64_t batch_size)
@@ -341,49 +290,60 @@ private:
 
         for (uint64_t receiver = 1; receiver <= party_count_; ++receiver)
         {
-            host::BatchShareMessage message;
-            message.packages.reserve(chunk_size);
+            std::vector<noise::SharePackage> packages;
+            packages.reserve(chunk_size);
 
             for (uint64_t offset = 0; offset < chunk_size; ++offset)
             {
-                message.packages.push_back(chunk.packages[offset * party_count_ + (receiver - 1)]);
+                packages.push_back(chunk.packages[offset * party_count_ + (receiver - 1)]);
             }
 
             if (receiver == party_id_)
             {
                 log("chunk " + std::to_string(chunk_start) + ": storing self batch");
-                const host::BatchAckMessage ack = process_batch_share_packages(message.packages);
+                const host::BatchAckMessage ack = process_batch_share_packages(packages);
                 apply_batch_ack(ack, chunk_start);
                 continue;
             }
 
             log("chunk " + std::to_string(chunk_start) + ": sending batch shares to party " + std::to_string(receiver));
-            const std::string reply = host::request_reply(peers_[receiver - 1], host::build_batch_share_message(message));
-            if (reply.empty())
+            noise_rpc::BatchShareRequest request;
+            for (const auto& share : packages)
             {
-                throw std::runtime_error("Empty batch ack reply from party " + std::to_string(receiver));
+                auto* entry = request.add_packages();
+                host::fill_share_package_proto(share, entry);
             }
-            host::BatchAckMessage ack;
-            if (!host::parse_batch_ack_message(reply, &ack))
+
+            grpc::ClientContext context;
+            noise_rpc::BatchAckReply reply;
+            const auto status = stubs_[receiver - 1]->BatchShare(&context, request, &reply);
+            if (!status.ok())
             {
-                throw std::runtime_error("Invalid batch ack reply: " + reply);
+                throw std::runtime_error("BatchShare RPC failed for party " + std::to_string(receiver) + ": " + status.error_message());
+            }
+
+            host::BatchAckMessage ack;
+            ack.acks.reserve(reply.acks_size());
+            for (const auto& ack_proto : reply.acks())
+            {
+                ack.acks.push_back(host::parse_ack_message_proto(ack_proto));
             }
             apply_batch_ack(ack, chunk_start);
         }
     }
 
-    host::BatchAckMessage handle_batch_share_request(const host::BatchShareMessage& message)
+    host::BatchAckMessage handle_batch_share_packages(const std::vector<noise::SharePackage>& packages)
     {
-        if (message.packages.empty())
+        if (packages.empty())
         {
             throw std::runtime_error("Received empty batch share message");
         }
 
-        const uint64_t batch_round_id = batch_round_from_subround(message.packages.front().round_id);
-        const uint64_t chunk_start = batch_index_from_subround(message.packages.front().round_id);
+        const uint64_t batch_round_id = batch_round_from_subround(packages.front().round_id);
+        const uint64_t chunk_start = batch_index_from_subround(packages.front().round_id);
         std::vector<uint64_t> round_ids;
-        round_ids.reserve(message.packages.size());
-        for (const auto& share : message.packages)
+        round_ids.reserve(packages.size());
+        for (const auto& share : packages)
         {
             if (batch_round_from_subround(share.round_id) != batch_round_id)
             {
@@ -401,7 +361,7 @@ private:
             prepare_chunk_locked(chunk_start, round_ids);
         }
 
-        return process_batch_share_packages(message.packages);
+        return process_batch_share_packages(packages);
     }
 
     host::BatchAckMessage process_batch_share_packages(const std::vector<noise::SharePackage>& packages)
@@ -672,12 +632,16 @@ private:
                     continue;
                 }
 
-                const std::string reply = host::request_reply(peers_[i], host::build_status_request());
-                host::StatusSnapshot status;
-                if (!host::parse_status_response(reply, &status))
+                noise_rpc::StatusRequest request;
+                request.set_full(false);
+                grpc::ClientContext context;
+                noise_rpc::StatusReply response;
+                const auto rpc_status = stubs_[i]->Status(&context, request, &response);
+                if (!rpc_status.ok())
                 {
-                    throw std::runtime_error("Invalid status reply from " + peers_[i].host + ": " + reply);
+                    throw std::runtime_error("Status RPC failed for party " + std::to_string(i + 1) + ": " + rpc_status.error_message());
                 }
+                const host::StatusSnapshot status = host::parse_status_proto(response);
 
                 if (status.state == "ERROR")
                 {
@@ -701,6 +665,73 @@ private:
 
         throw std::runtime_error("Timed out waiting for peers to reach chunk start " + std::to_string(chunk_start));
     }
+};
+
+class NoisePartyServiceImpl final : public noise_rpc::NoiseParty::Service
+{
+public:
+    explicit NoisePartyServiceImpl(PartyNode* node)
+        : node_(node)
+    {
+    }
+
+    grpc::Status StartRound(grpc::ServerContext*,
+                            const noise_rpc::StartRequest* request,
+                            noise_rpc::StartReply* reply) override
+    {
+        try
+        {
+            node_->StartRound(request->round_id(), request->batch_size());
+            reply->set_ok(true);
+            reply->set_message("STARTED");
+            return grpc::Status::OK;
+        }
+        catch (const std::exception& ex)
+        {
+            reply->set_ok(false);
+            reply->set_message(ex.what());
+            return grpc::Status::OK;
+        }
+    }
+
+    grpc::Status BatchShare(grpc::ServerContext*,
+                            const noise_rpc::BatchShareRequest* request,
+                            noise_rpc::BatchAckReply* reply) override
+    {
+        try
+        {
+            std::vector<noise::SharePackage> packages;
+            packages.reserve(request->packages_size());
+            for (const auto& entry : request->packages())
+            {
+                packages.push_back(host::parse_share_package_proto(entry));
+            }
+            const host::BatchAckMessage ack = node_->HandleBatchSharePackages(packages);
+            for (const auto& ack_item : ack.acks)
+            {
+                auto* entry = reply->add_acks();
+                host::fill_ack_message_proto(ack_item, entry);
+            }
+            return grpc::Status::OK;
+        }
+        catch (const std::exception& ex)
+        {
+            return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
+        }
+    }
+
+    grpc::Status Status(grpc::ServerContext*,
+                        const noise_rpc::StatusRequest* request,
+                        noise_rpc::StatusReply* reply) override
+    {
+        const bool full = request->full();
+        host::StatusSnapshot status = node_->GetStatus();
+        host::fill_status_proto(status, reply, full);
+        return grpc::Status::OK;
+    }
+
+private:
+    PartyNode* node_;
 };
 } // namespace
 
@@ -730,7 +761,20 @@ int main(int argc, const char* argv[])
             self.endpoint.port,
             peers);
         party.initialize();
-        party.serve_forever();
+        NoisePartyServiceImpl service(&party);
+        grpc::ServerBuilder builder;
+        const std::string listen_addr = "0.0.0.0:" + std::to_string(self.endpoint.port);
+        builder.SetMaxReceiveMessageSize(64 * 1024 * 1024);
+        builder.SetMaxSendMessageSize(64 * 1024 * 1024);
+        builder.AddListeningPort(listen_addr, grpc::InsecureServerCredentials());
+        builder.RegisterService(&service);
+        std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+        if (!server)
+        {
+            throw std::runtime_error("Failed to start gRPC server on " + listen_addr);
+        }
+        std::cout << "gRPC server listening on " << listen_addr << std::endl;
+        server->Wait();
         return 0;
     }
     catch (const std::exception& ex)

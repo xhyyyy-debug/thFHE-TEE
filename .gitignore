@@ -17,4 +17,4 @@ CMakeCache.txt
 *.crt
 
 #third_part
-third_party/
+thirdparty/

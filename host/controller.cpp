@@ -6,10 +6,12 @@
 #include <thread>
 #include <vector>
 
+#include <grpcpp/grpcpp.h>
+
 #include "../enclave/prog_mpc.h"
 #include "config.hpp"
 #include "control_protocol.hpp"
-#include "network.hpp"
+#include "grpc_utils.hpp"
 
 namespace
 {
@@ -107,6 +109,21 @@ int main(int argc, const char* argv[])
         const uint64_t party_count = config.party_count;
         const uint64_t threshold = config.threshold;
         const auto peers = host::endpoints_from_config(config);
+        std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
+        stubs.reserve(peers.size());
+        grpc::ChannelArguments channel_args;
+        channel_args.SetMaxReceiveMessageSize(64 * 1024 * 1024);
+        channel_args.SetMaxSendMessageSize(64 * 1024 * 1024);
+
+        for (const auto& peer : peers)
+        {
+            const std::string target = host::endpoint_to_target(peer);
+            auto channel = grpc::CreateCustomChannel(
+                target,
+                grpc::InsecureChannelCredentials(),
+                channel_args);
+            stubs.push_back(noise_rpc::NoiseParty::NewStub(channel));
+        }
 
         const uint64_t total_batches = (total_size + batch_size - 1) / batch_size;
         const auto overall_start = std::chrono::steady_clock::now();
@@ -128,10 +145,19 @@ int main(int argc, const char* argv[])
                       << " batch_size=" << current_size
                       << std::endl;
 
-            for (const auto& peer : peers)
+            for (size_t i = 0; i < stubs.size(); ++i)
             {
-                const std::string reply = host::request_reply(peer, host::build_start_message(current_round, current_size));
-                std::cout << peer.host << ": " << reply << std::endl;
+                grpc::ClientContext context;
+                noise_rpc::StartRequest request;
+                request.set_round_id(current_round);
+                request.set_batch_size(current_size);
+                noise_rpc::StartReply reply;
+                const auto status = stubs[i]->StartRound(&context, request, &reply);
+                if (!status.ok())
+                {
+                    throw std::runtime_error("StartRound RPC failed for " + peers[i].host + ": " + status.error_message());
+                }
+                std::cout << peers[i].host << ": " << (reply.ok() ? "OK" : "ERR") << " " << reply.message() << std::endl;
             }
 
             while (std::chrono::steady_clock::now() < deadline)
@@ -140,11 +166,16 @@ int main(int argc, const char* argv[])
                 uint64_t min_completed = current_size;
                 for (size_t i = 0; i < peers.size(); ++i)
                 {
-                    const std::string reply = host::request_reply(peers[i], host::build_status_request());
-                    if (!host::parse_status_response(reply, &snapshots[i]))
+                    grpc::ClientContext context;
+                    noise_rpc::StatusRequest request;
+                    request.set_full(false);
+                    noise_rpc::StatusReply reply;
+                    const auto status = stubs[i]->Status(&context, request, &reply);
+                    if (!status.ok())
                     {
-                        throw std::runtime_error("Invalid status reply from " + peers[i].host + ": " + reply);
+                        throw std::runtime_error("Status RPC failed for " + peers[i].host + ": " + status.error_message());
                     }
+                    snapshots[i] = host::parse_status_proto(reply);
 
                     all_done = all_done && snapshots[i].state == "DONE" && snapshots[i].completed_items == current_size;
                     min_completed = std::min(min_completed, snapshots[i].completed_items);
@@ -207,11 +238,16 @@ int main(int argc, const char* argv[])
             {
                 for (size_t i = 0; i < peers.size(); ++i)
                 {
-                    const std::string reply = host::request_reply(peers[i], host::build_status_request_full());
-                    if (!host::parse_status_response(reply, &snapshots[i]))
+                    grpc::ClientContext context;
+                    noise_rpc::StatusRequest request;
+                    request.set_full(true);
+                    noise_rpc::StatusReply reply;
+                    const auto status = stubs[i]->Status(&context, request, &reply);
+                    if (!status.ok())
                     {
-                        throw std::runtime_error("Invalid status reply from " + peers[i].host + ": " + reply);
+                        throw std::runtime_error("Status RPC failed for " + peers[i].host + ": " + status.error_message());
                     }
+                    snapshots[i] = host::parse_status_proto(reply);
                 }
 
                 const auto verify_start = std::chrono::steady_clock::now();
