@@ -8,5 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(OpenEnclave CONFIG REQUIRED)
 
+add_subdirectory(algebra)
 add_subdirectory(enclave)
 add_subdirectory(host)

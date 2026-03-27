@@ -11,6 +11,11 @@ endif()
 
 file(MAKE_DIRECTORY ${ENCLAVE_GEN_DIR})
 
+add_subdirectory(common)
+add_subdirectory(prss)
+add_subdirectory(mpc)
+add_subdirectory(protocol)
+
 add_custom_command(
     OUTPUT
         ${ENCLAVE_GEN_DIR}/noise_t.c
@@ -47,6 +52,7 @@ target_compile_definitions(
 target_link_libraries(
     ${ENCLAVE_TARGET}
     PRIVATE
+        enclave_protocol
         openenclave::oeenclave
         openenclave::oecrypto${OE_CRYPTO_LIB}
         openenclave::oelibc

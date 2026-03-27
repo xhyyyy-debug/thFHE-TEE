@@ -29,13 +29,44 @@ message AckMessage {
 }
 
 message SharePoint {
-  uint64 x = 1;
-  RingElementRaw y = 2;
+  uint64 round_id = 1;
+  uint64 x = 2;
+  RingElementRaw y = 3;
+  uint64 sigma = 4;
+}
+
+message TripleDPackage {
+  uint64 round_id = 1;
+  uint64 sender_id = 2;
+  RingElementRaw d_share = 3;
+  uint64 sigma = 4;
+}
+
+message TripleShare {
+  uint64 round_id = 1;
+  RingElementRaw a = 2;
+  RingElementRaw b = 3;
+  RingElementRaw c = 4;
+  uint64 sigma = 5;
+}
+
+message BitVPackage {
+  uint64 round_id = 1;
+  uint64 sender_id = 2;
+  RingElementRaw v_share = 3;
+  uint64 sigma = 4;
+}
+
+message BitShare {
+  uint64 round_id = 1;
+  RingElementRaw b = 2;
+  uint64 sigma = 3;
 }
 
 message StartRequest {
   uint64 round_id = 1;
   uint64 batch_size = 2;
+  uint32 noise_bound_bits = 3;
 }
 
 message StartReply {
@@ -49,6 +80,43 @@ message BatchShareRequest {
 
 message BatchAckReply {
   repeated AckMessage acks = 1;
+}
+
+message BatchTripleDRequest {
+  repeated TripleDPackage packages = 1;
+}
+
+message BatchTripleAckReply {
+  bool ok = 1;
+}
+
+message BatchBitVRequest {
+  repeated BitVPackage packages = 1;
+}
+
+message BatchBitAckReply {
+  bool ok = 1;
+}
+
+message KeygenStartRequest {
+  uint64 round_id = 1;
+  string session_id = 2;
+  string preproc_root = 3;
+  string output_dir = 4;
+}
+
+message KeygenOpenSharePackage {
+  uint64 round_id = 1;
+  uint64 sender_id = 2;
+  RingElementRaw share = 3;
+}
+
+message BatchKeygenOpenRequest {
+  repeated KeygenOpenSharePackage packages = 1;
+}
+
+message BatchKeygenOpenReply {
+  bool ok = 1;
 }
 
 message StatusRequest {
@@ -68,10 +136,18 @@ message StatusReply {
   uint64 success = 10;
   repeated RingElementRaw local_secrets = 11;
   repeated SharePoint aggregates = 12;
+  repeated TripleShare triples = 13;
+  repeated BitShare bits = 14;
 }
 
 service NoiseParty {
   rpc StartRound(StartRequest) returns (StartReply);
   rpc BatchShare(BatchShareRequest) returns (BatchAckReply);
+  rpc StartTripleRound(StartRequest) returns (StartReply);
+  rpc BatchTripleD(BatchTripleDRequest) returns (BatchTripleAckReply);
+  rpc StartBitRound(StartRequest) returns (StartReply);
+  rpc BatchBitV(BatchBitVRequest) returns (BatchBitAckReply);
+  rpc StartKeygen(KeygenStartRequest) returns (StartReply);
+  rpc BatchKeygenOpen(BatchKeygenOpenRequest) returns (BatchKeygenOpenReply);
   rpc Status(StatusRequest) returns (StatusReply);
 }

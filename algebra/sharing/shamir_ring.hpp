@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "galois_ring.hpp"
+#include "../rings/galois_ring.hpp"
 
 namespace algebra
 {

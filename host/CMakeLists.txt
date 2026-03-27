@@ -1,5 +1,3 @@
-set(PARTY_TARGET noise_party)
-set(CONTROLLER_TARGET noise_ctl)
 set(EDL_FILE ${CMAKE_SOURCE_DIR}/noise.edl)
 set(HOST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(PROTO_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_proto)
@@ -104,6 +102,7 @@ add_library(noise_grpc SHARED
 target_include_directories(noise_grpc
     PUBLIC
         ${PROTO_GEN_DIR}
+        ${CMAKE_SOURCE_DIR}
 )
 
 target_link_libraries(noise_grpc
@@ -118,82 +117,8 @@ target_link_libraries(noise_grpc
         absl::log
 )
 
-add_library(host_common STATIC
-    config.cpp
-)
-
-target_include_directories(host_common
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/host
-        ${CMAKE_SOURCE_DIR}/enclave
-        ${CMAKE_SOURCE_DIR}/algebra
-        ${PROTO_GEN_DIR}
-)
-
-add_executable(${PARTY_TARGET}
-    host.cpp
-    ${HOST_GEN_DIR}/noise_u.c
-)
-
-target_include_directories(${PARTY_TARGET}
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/host
-        ${CMAKE_SOURCE_DIR}/enclave
-        ${CMAKE_SOURCE_DIR}/algebra
-        ${HOST_GEN_DIR}
-)
-
-target_link_libraries(${PARTY_TARGET}
-    PRIVATE
-        host_common
-        noise_grpc
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        openenclave::oehost
-        Threads::Threads
-)
-
-add_dependencies(${PARTY_TARGET} noise_enclave_sign)
-
-if (NOT DEFINED NOISE_SIGNED_ENCLAVE)
-    message(FATAL_ERROR "NOISE_SIGNED_ENCLAVE not set. Ensure enclave is configured before host.")
-endif()
-
-add_custom_command(
-    TARGET ${PARTY_TARGET}
-    POST_BUILD
-    COMMAND
-        ${CMAKE_COMMAND} -E copy_if_different
-        ${NOISE_SIGNED_ENCLAVE}
-        $<TARGET_FILE_DIR:${PARTY_TARGET}>
-    COMMENT "Copying signed enclave next to host binary"
-)
-
-add_executable(${CONTROLLER_TARGET}
-    controller.cpp
-)
-
-target_include_directories(${CONTROLLER_TARGET}
-    PRIVATE
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/host
-        ${CMAKE_SOURCE_DIR}/enclave
-        ${CMAKE_SOURCE_DIR}/algebra
-)
-
-target_link_libraries(${CONTROLLER_TARGET}
-    PRIVATE
-        host_common
-        noise_grpc
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        Threads::Threads
-)
+add_subdirectory(transport)
+add_subdirectory(config)
+add_subdirectory(protocol)
+add_subdirectory(dkg)
+add_subdirectory(apps)

@@ -35,8 +35,42 @@ enclave
 
     struct share_point_t
     {
+        uint64_t round_id;
         uint64_t x;
         ring_element_t y;
+        uint64_t sigma;
+    };
+
+    struct triple_d_package_t
+    {
+        uint64_t round_id;
+        uint64_t sender_id;
+        ring_element_t d_share;
+        uint64_t sigma;
+    };
+
+    struct triple_share_t
+    {
+        uint64_t round_id;
+        ring_element_t a;
+        ring_element_t b;
+        ring_element_t c;
+        uint64_t sigma;
+    };
+
+    struct bit_v_package_t
+    {
+        uint64_t round_id;
+        uint64_t sender_id;
+        ring_element_t v_share;
+        uint64_t sigma;
+    };
+
+    struct bit_share_t
+    {
+        uint64_t round_id;
+        ring_element_t b;
+        uint64_t sigma;
     };
 
     trusted
@@ -46,6 +80,42 @@ enclave
             uint64_t party_count,
             uint64_t threshold,
             uint32_t noise_bound_bits);
+
+        public int ecall_prss_next(
+            [out] ring_element_t* share_value);
+
+        public int ecall_przs_next(
+            [out] ring_element_t* share_value);
+
+        public int ecall_triple_generate_batch(
+            [in, count=batch_count] uint64_t* round_ids,
+            size_t batch_count,
+            [out, count=package_count] triple_d_package_t* packages,
+            size_t package_count);
+
+        public int ecall_triple_store_batch(
+            [in, count=batch_count] triple_d_package_t* packages,
+            size_t batch_count);
+
+        public int ecall_triple_done_batch(
+            [out, count=batch_count] triple_share_t* triples,
+            size_t batch_count);
+        public int ecall_verify_triple_output([in] triple_share_t* triple);
+
+        public int ecall_bit_generate_batch(
+            [in, count=batch_count] uint64_t* round_ids,
+            size_t batch_count,
+            [out, count=package_count] bit_v_package_t* packages,
+            size_t package_count);
+
+        public int ecall_bit_store_batch(
+            [in, count=batch_count] bit_v_package_t* packages,
+            size_t batch_count);
+
+        public int ecall_bit_done_batch(
+            [out, count=batch_count] bit_share_t* bits,
+            size_t batch_count);
+        public int ecall_verify_bit_output([in] bit_share_t* bit);
 
         public int ecall_sharegen(
             uint64_t round_id,
@@ -59,6 +129,14 @@ enclave
             [out, count=package_count] share_package_t* packages,
             size_t package_count,
             [out, count=batch_count] ring_element_t* sampled_secrets);
+
+        public int ecall_sharegen_batch_with_bound(
+            [in, count=batch_count] uint64_t* round_ids,
+            size_t batch_count,
+            [out, count=package_count] share_package_t* packages,
+            size_t package_count,
+            [out, count=batch_count] ring_element_t* sampled_secrets,
+            uint32_t noise_bound_bits);
 
         public int ecall_store(
             [in] share_package_t* package,
@@ -75,5 +153,6 @@ enclave
         public int ecall_done_batch(
             [out, count=batch_count] share_point_t* aggregates,
             size_t batch_count);
+        public int ecall_verify_noise_output([in] share_point_t* point);
     };
 };

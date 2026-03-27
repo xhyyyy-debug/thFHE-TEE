@@ -4,8 +4,8 @@
 #include <array>
 #include <cstddef>
 
-#include "common.hpp"
-#include "fields.hpp"
+#include "../base/common.hpp"
+#include "../base/fields.hpp"
 
 namespace algebra
 {

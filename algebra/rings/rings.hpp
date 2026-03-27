@@ -5,7 +5,7 @@
 #include <cassert>
 #include <cstddef>
 
-#include "common.hpp"
+#include "../base/common.hpp"
 
 namespace algebra
 {

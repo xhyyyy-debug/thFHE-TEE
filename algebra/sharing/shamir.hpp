@@ -4,9 +4,9 @@
 #include <array>
 #include <cstddef>
 
-#include "common.hpp"
-#include "fields.hpp"
-#include "polynomial.hpp"
+#include "../base/common.hpp"
+#include "../base/fields.hpp"
+#include "../polynomial/polynomial.hpp"
 
 namespace algebra
 {

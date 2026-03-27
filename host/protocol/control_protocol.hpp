@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "../enclave/prog_mpc.h"
-#include "network.hpp"
+#include "../../enclave/prog_mpc.h"
+#include "../transport/network.hpp"
 
 namespace host
 {
@@ -27,6 +27,8 @@ struct StatusSnapshot
     uint64_t success = 0;
     std::vector<noise::RingElementRaw> local_secrets;
     std::vector<noise::SharePoint> aggregates;
+    std::vector<noise::TripleShare> triples;
+    std::vector<noise::BitShare> bits;
 };
 
 inline std::vector<std::string> split_csv(const std::string& text);
@@ -533,7 +535,6 @@ inline std::vector<Endpoint> parse_endpoints_csv(const std::string& text)
     {
         endpoints.push_back(parse_endpoint(part));
     }
-
     return endpoints;
 }
 } // namespace host

@@ -4,8 +4,9 @@
 #include <string>
 #include <vector>
 
-#include "../enclave/prog_mpc.h"
-#include "config.hpp"
+#include "../../enclave/prog_mpc.h"
+#include "../config/config.hpp"
+#include "control_protocol.hpp"
 
 #include "noise.grpc.pb.h"
 
@@ -83,16 +84,119 @@ inline noise::AckMessage parse_ack_message_proto(const noise_rpc::AckMessage& in
 
 inline void fill_share_point_proto(const noise::SharePoint& in, noise_rpc::SharePoint* out)
 {
+    out->set_round_id(in.round_id);
     out->set_x(in.x);
+    out->set_sigma(in.sigma);
     fill_ring_proto(in.y, out->mutable_y());
 }
 
 inline noise::SharePoint parse_share_point_proto(const noise_rpc::SharePoint& in)
 {
     noise::SharePoint out{};
+    out.round_id = in.round_id();
     out.x = in.x();
     out.y = parse_ring_proto(in.y());
+    out.sigma = in.sigma();
     return out;
+}
+
+inline void fill_triple_d_package_proto(const noise::TripleDPackage& in, noise_rpc::TripleDPackage* out)
+{
+    out->set_round_id(in.round_id);
+    out->set_sender_id(in.sender_id);
+    out->set_sigma(in.sigma);
+    fill_ring_proto(in.d_share, out->mutable_d_share());
+}
+
+inline noise::TripleDPackage parse_triple_d_package_proto(const noise_rpc::TripleDPackage& in)
+{
+    noise::TripleDPackage out{};
+    out.round_id = in.round_id();
+    out.sender_id = in.sender_id();
+    out.d_share = parse_ring_proto(in.d_share());
+    out.sigma = in.sigma();
+    return out;
+}
+
+inline void fill_triple_share_proto(const noise::TripleShare& in, noise_rpc::TripleShare* out)
+{
+    out->set_round_id(in.round_id);
+    out->set_sigma(in.sigma);
+    fill_ring_proto(in.a, out->mutable_a());
+    fill_ring_proto(in.b, out->mutable_b());
+    fill_ring_proto(in.c, out->mutable_c());
+}
+
+inline noise::TripleShare parse_triple_share_proto(const noise_rpc::TripleShare& in)
+{
+    noise::TripleShare out{};
+    out.round_id = in.round_id();
+    out.a = parse_ring_proto(in.a());
+    out.b = parse_ring_proto(in.b());
+    out.c = parse_ring_proto(in.c());
+    out.sigma = in.sigma();
+    return out;
+}
+
+inline void fill_bit_v_package_proto(const noise::BitVPackage& in, noise_rpc::BitVPackage* out)
+{
+    out->set_round_id(in.round_id);
+    out->set_sender_id(in.sender_id);
+    out->set_sigma(in.sigma);
+    fill_ring_proto(in.v_share, out->mutable_v_share());
+}
+
+inline noise::BitVPackage parse_bit_v_package_proto(const noise_rpc::BitVPackage& in)
+{
+    noise::BitVPackage out{};
+    out.round_id = in.round_id();
+    out.sender_id = in.sender_id();
+    out.v_share = parse_ring_proto(in.v_share());
+    out.sigma = in.sigma();
+    return out;
+}
+
+inline void fill_bit_share_proto(const noise::BitShare& in, noise_rpc::BitShare* out)
+{
+    out->set_round_id(in.round_id);
+    out->set_sigma(in.sigma);
+    fill_ring_proto(in.b, out->mutable_b());
+}
+
+inline noise::BitShare parse_bit_share_proto(const noise_rpc::BitShare& in)
+{
+    noise::BitShare out{};
+    out.round_id = in.round_id();
+    out.b = parse_ring_proto(in.b());
+    out.sigma = in.sigma();
+    return out;
+}
+
+inline void fill_keygen_open_share_proto(
+    uint64_t round_id,
+    uint64_t sender_id,
+    const noise::RingElementRaw& share,
+    noise_rpc::KeygenOpenSharePackage* out)
+{
+    out->set_round_id(round_id);
+    out->set_sender_id(sender_id);
+    fill_ring_proto(share, out->mutable_share());
+}
+
+inline noise::RingElementRaw parse_keygen_open_share_proto(
+    const noise_rpc::KeygenOpenSharePackage& in,
+    uint64_t* round_id,
+    uint64_t* sender_id)
+{
+    if (round_id != nullptr)
+    {
+        *round_id = in.round_id();
+    }
+    if (sender_id != nullptr)
+    {
+        *sender_id = in.sender_id();
+    }
+    return parse_ring_proto(in.share());
 }
 
 inline void fill_status_proto(const StatusSnapshot& in, noise_rpc::StatusReply* out, bool full)
@@ -109,6 +213,8 @@ inline void fill_status_proto(const StatusSnapshot& in, noise_rpc::StatusReply* 
     out->set_success(in.success);
     out->clear_local_secrets();
     out->clear_aggregates();
+    out->clear_triples();
+    out->clear_bits();
 
     if (full)
     {
@@ -121,6 +227,16 @@ inline void fill_status_proto(const StatusSnapshot& in, noise_rpc::StatusReply* 
         {
             auto* entry = out->add_aggregates();
             fill_share_point_proto(point, entry);
+        }
+        for (const auto& triple : in.triples)
+        {
+            auto* entry = out->add_triples();
+            fill_triple_share_proto(triple, entry);
+        }
+        for (const auto& bit : in.bits)
+        {
+            auto* entry = out->add_bits();
+            fill_bit_share_proto(bit, entry);
         }
     }
 }
@@ -141,6 +257,8 @@ inline StatusSnapshot parse_status_proto(const noise_rpc::StatusReply& in)
 
     out.local_secrets.clear();
     out.aggregates.clear();
+    out.triples.clear();
+    out.bits.clear();
     out.local_secrets.reserve(in.local_secrets_size());
     for (const auto& secret : in.local_secrets())
     {
@@ -150,6 +268,16 @@ inline StatusSnapshot parse_status_proto(const noise_rpc::StatusReply& in)
     for (const auto& point : in.aggregates())
     {
         out.aggregates.push_back(parse_share_point_proto(point));
+    }
+    out.triples.reserve(in.triples_size());
+    for (const auto& triple : in.triples())
+    {
+        out.triples.push_back(parse_triple_share_proto(triple));
+    }
+    out.bits.reserve(in.bits_size());
+    for (const auto& bit : in.bits())
+    {
+        out.bits.push_back(parse_bit_share_proto(bit));
     }
     return out;
 }

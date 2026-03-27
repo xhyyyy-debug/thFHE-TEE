@@ -3,12 +3,15 @@
 
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 
 namespace algebra
 {
 struct Z128
 {
+    static constexpr size_t BIT_LENGTH = 128;
+
     uint64_t lo = 0;
     uint64_t hi = 0;
 
@@ -187,12 +190,25 @@ inline uint8_t gf16_inv(uint8_t a)
     return gf16_pow(a, 14);
 }
 
+inline std::array<uint8_t, 3> gf16_two_powers(uint8_t input)
+{
+    std::array<uint8_t, 3> powers{};
+    powers[0] = input & 0xFU;
+    for (size_t i = 1; i < powers.size(); ++i)
+    {
+        powers[i] = gf16_mul(powers[i - 1], powers[i - 1]);
+    }
+    return powers;
+}
+
 struct ResiduePolyF4Z128;
 
 inline ResiduePolyF4Z128 operator+(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
 inline ResiduePolyF4Z128 operator-(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
 inline ResiduePolyF4Z128 operator-(ResiduePolyF4Z128 value);
 inline ResiduePolyF4Z128 operator*(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
+inline bool operator==(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
+inline bool operator!=(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs);
 
 struct ResiduePolyF4Z128
 {
@@ -292,6 +308,56 @@ struct ResiduePolyF4Z128
         return x0;
     }
 
+    static bool solve_1(const ResiduePolyF4Z128& v, ResiduePolyF4Z128* out)
+    {
+        assert(out != nullptr);
+        static constexpr std::array<uint8_t, 3> kGf16NewtonInnerLoop{ { 8U, 5U, 11U } };
+
+        const uint8_t composed = v.bit_compose(0);
+        const auto v_powers = gf16_two_powers(composed);
+
+        uint8_t res = 0;
+        for (size_t i = 0; i < kGf16NewtonInnerLoop.size(); ++i)
+        {
+            res ^= gf16_mul(kGf16NewtonInnerLoop[i], v_powers[i]);
+        }
+
+        *out = from_exceptional_sequence(res);
+        return true;
+    }
+
+    static bool solve(const ResiduePolyF4Z128& v, ResiduePolyF4Z128* out)
+    {
+        assert(out != nullptr);
+
+        const ResiduePolyF4Z128 one_val = one();
+        const ResiduePolyF4Z128 two_val = two();
+
+        ResiduePolyF4Z128 x = zero();
+        if (!solve_1(v, &x))
+        {
+            return false;
+        }
+
+        ResiduePolyF4Z128 y = one_val;
+        for (size_t i = 1; i <= 7; ++i)
+        {
+            (void)i;
+            const ResiduePolyF4Z128 z = one_val + (two_val * x);
+            y = y * (two_val - (z * y));
+            y = y * (two_val - (z * y));
+            x = ((x * x) + v) * y;
+        }
+
+        if ((x + (x * x)) != v)
+        {
+            return false;
+        }
+
+        *out = x;
+        return true;
+    }
+
     void mul_by_x()
     {
         const Z128 last = coefs[3];
@@ -341,6 +407,23 @@ inline ResiduePolyF4Z128& operator-=(ResiduePolyF4Z128& lhs, ResiduePolyF4Z128 r
 {
     lhs = lhs - rhs;
     return lhs;
+}
+
+inline bool operator==(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs)
+{
+    for (size_t i = 0; i < 4; ++i)
+    {
+        if (lhs.coefs[i] != rhs.coefs[i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool operator!=(ResiduePolyF4Z128 lhs, ResiduePolyF4Z128 rhs)
+{
+    return !(lhs == rhs);
 }
 
 inline std::array<Z128, 3> karatsuba_2(const std::array<Z128, 2>& a, const std::array<Z128, 2>& b)

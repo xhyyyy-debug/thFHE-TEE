@@ -7,6 +7,8 @@ x-party-common: &party-common
     args:
       BASE_IMAGE: noise-base:latest
   working_dir: /app
+  volumes:
+    - ./artifacts:/artifacts
   devices:
     - /dev/sgx_enclave:/dev/sgx_enclave
     - /dev/sgx_provision:/dev/sgx_provision

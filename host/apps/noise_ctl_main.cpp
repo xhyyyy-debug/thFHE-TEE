@@ -5,13 +5,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdlib>
 
 #include <grpcpp/grpcpp.h>
 
-#include "../enclave/prog_mpc.h"
-#include "config.hpp"
-#include "control_protocol.hpp"
-#include "grpc_utils.hpp"
+#include "../../algebra/sharing/open.hpp"
+#include "../../enclave/prog_mpc.h"
+#include "../config/config.hpp"
+#include "../protocol/control_protocol.hpp"
+#include "../protocol/grpc_utils.hpp"
 
 namespace
 {
@@ -28,6 +30,66 @@ bool verify_enabled()
         return true;
     }
     return std::string(env) != "0";
+}
+
+bool triple_mode_enabled()
+{
+    const char* env = std::getenv("NOISE_MODE");
+    return env != nullptr && std::string(env) == "triple";
+}
+
+bool bit_mode_enabled()
+{
+    const char* env = std::getenv("NOISE_MODE");
+    return env != nullptr && std::string(env) == "bit";
+}
+
+enum class ProtocolMode
+{
+    kNoise,
+    kTriple,
+    kBit,
+};
+
+ProtocolMode selected_mode()
+{
+    if (triple_mode_enabled())
+    {
+        return ProtocolMode::kTriple;
+    }
+    if (bit_mode_enabled())
+    {
+        return ProtocolMode::kBit;
+    }
+    return ProtocolMode::kNoise;
+}
+
+const char* start_rpc_name(ProtocolMode mode)
+{
+    switch (mode)
+    {
+    case ProtocolMode::kNoise:
+        return "StartRound";
+    case ProtocolMode::kTriple:
+        return "StartTripleRound";
+    case ProtocolMode::kBit:
+        return "StartBitRound";
+    }
+    return "StartRound";
+}
+
+const char* done_state_name(ProtocolMode mode)
+{
+    switch (mode)
+    {
+    case ProtocolMode::kNoise:
+        return "DONE";
+    case ProtocolMode::kTriple:
+        return "TRIPLE_DONE";
+    case ProtocolMode::kBit:
+        return "BIT_DONE";
+    }
+    return "DONE";
 }
 
 std::string format_duration(std::chrono::seconds seconds)
@@ -108,6 +170,7 @@ int main(int argc, const char* argv[])
 
         const uint64_t party_count = config.party_count;
         const uint64_t threshold = config.threshold;
+        const ProtocolMode mode = selected_mode();
         const auto peers = host::endpoints_from_config(config);
         std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
         stubs.reserve(peers.size());
@@ -152,10 +215,22 @@ int main(int argc, const char* argv[])
                 request.set_round_id(current_round);
                 request.set_batch_size(current_size);
                 noise_rpc::StartReply reply;
-                const auto status = stubs[i]->StartRound(&context, request, &reply);
+                grpc::Status status;
+                if (mode == ProtocolMode::kTriple)
+                {
+                    status = stubs[i]->StartTripleRound(&context, request, &reply);
+                }
+                else if (mode == ProtocolMode::kBit)
+                {
+                    status = stubs[i]->StartBitRound(&context, request, &reply);
+                }
+                else
+                {
+                    status = stubs[i]->StartRound(&context, request, &reply);
+                }
                 if (!status.ok())
                 {
-                    throw std::runtime_error("StartRound RPC failed for " + peers[i].host + ": " + status.error_message());
+                    throw std::runtime_error(std::string(start_rpc_name(mode)) + " RPC failed for " + peers[i].host + ": " + status.error_message());
                 }
                 std::cout << peers[i].host << ": " << (reply.ok() ? "OK" : "ERR") << " " << reply.message() << std::endl;
             }
@@ -177,7 +252,8 @@ int main(int argc, const char* argv[])
                     }
                     snapshots[i] = host::parse_status_proto(reply);
 
-                    all_done = all_done && snapshots[i].state == "DONE" && snapshots[i].completed_items == current_size;
+                    const std::string expected_state = done_state_name(mode);
+                    all_done = all_done && snapshots[i].state == expected_state && snapshots[i].completed_items == current_size;
                     min_completed = std::min(min_completed, snapshots[i].completed_items);
                 }
 
@@ -226,7 +302,8 @@ int main(int argc, const char* argv[])
 
             for (const auto& snapshot : snapshots)
             {
-                if (snapshot.state != "DONE" || snapshot.completed_items != current_size)
+                const std::string expected_state = done_state_name(mode);
+                if (snapshot.state != expected_state || snapshot.completed_items != current_size)
                 {
                     std::cerr << "Round did not complete on all parties." << std::endl;
                     return 2;
@@ -254,29 +331,87 @@ int main(int argc, const char* argv[])
                 uint64_t next_progress_mark = 5;
                 for (uint64_t item = 0; item < current_size; ++item)
                 {
-                    std::vector<noise::SharePoint> aggregate_shares;
-                    aggregate_shares.reserve(threshold + 1);
-                    noise::RingElementRaw expected_noise{};
-
-                    for (size_t i = 0; i < snapshots.size(); ++i)
+                    if (mode == ProtocolMode::kNoise)
                     {
-                        if (snapshots[i].local_secrets.size() != current_size || snapshots[i].aggregates.size() != current_size)
+                        std::vector<algebra::RingShare> aggregate_shares;
+                        aggregate_shares.reserve(party_count);
+                        noise::RingElementRaw expected_noise{};
+
+                        for (size_t i = 0; i < snapshots.size(); ++i)
                         {
-                            throw std::runtime_error("Incomplete batch results from party " + std::to_string(snapshots[i].party_id));
+                            if (snapshots[i].local_secrets.size() != current_size || snapshots[i].aggregates.size() != current_size)
+                            {
+                                throw std::runtime_error("Incomplete batch results from party " + std::to_string(snapshots[i].party_id));
+                            }
+
+                            expected_noise = noise::ring_add(expected_noise, snapshots[i].local_secrets[item]);
+                            aggregate_shares.push_back(algebra::RingShare{
+                                snapshots[i].aggregates[item].x,
+                                noise::ring_from_raw(snapshots[i].aggregates[item].y)});
                         }
 
-                        expected_noise = noise::ring_add(expected_noise, snapshots[i].local_secrets[item]);
-                        if (aggregate_shares.size() < threshold + 1)
+                        noise::RingElement opened = noise::RingElement::zero();
+                        if (!algebra::RingOpen::robust_open(aggregate_shares, threshold, 0, &opened))
                         {
-                            aggregate_shares.push_back(snapshots[i].aggregates[item]);
+                            throw std::runtime_error("Failed to open aggregate share");
                         }
+                        success = success && noise::ring_equal(noise::raw_from_ring(opened), expected_noise);
                     }
+                    else if (mode == ProtocolMode::kTriple)
+                    {
+                        std::vector<algebra::RingShare> a_shares;
+                        std::vector<algebra::RingShare> b_shares;
+                        std::vector<algebra::RingShare> c_shares;
+                        a_shares.reserve(party_count);
+                        b_shares.reserve(party_count);
+                        c_shares.reserve(party_count);
 
-                    const noise::RingElementRaw reconstructed = noise::ProgMPCHandler::reconstruct_secret(
-                        aggregate_shares.data(),
-                        aggregate_shares.size());
-                    const bool item_success = noise::ring_equal(reconstructed, expected_noise);
-                    success = success && item_success;
+                        for (size_t i = 0; i < snapshots.size(); ++i)
+                        {
+                            if (snapshots[i].triples.size() != current_size)
+                            {
+                                throw std::runtime_error("Incomplete triple results from party " + std::to_string(snapshots[i].party_id));
+                            }
+                            a_shares.push_back(algebra::RingShare{snapshots[i].party_id, noise::ring_from_raw(snapshots[i].triples[item].a)});
+                            b_shares.push_back(algebra::RingShare{snapshots[i].party_id, noise::ring_from_raw(snapshots[i].triples[item].b)});
+                            c_shares.push_back(algebra::RingShare{snapshots[i].party_id, noise::ring_from_raw(snapshots[i].triples[item].c)});
+                        }
+
+                        noise::RingElement a = noise::RingElement::zero();
+                        noise::RingElement b = noise::RingElement::zero();
+                        noise::RingElement c = noise::RingElement::zero();
+                        if (!algebra::RingOpen::robust_open(a_shares, threshold, 0, &a) ||
+                            !algebra::RingOpen::robust_open(b_shares, threshold, 0, &b) ||
+                            !algebra::RingOpen::robust_open(c_shares, threshold, 0, &c))
+                        {
+                            throw std::runtime_error("Failed to robust open triple shares");
+                        }
+
+                        const noise::RingElement prod = a * b;
+                        success = success && (prod == c);
+                    }
+                    else
+                    {
+                        std::vector<algebra::RingShare> b_shares;
+                        b_shares.reserve(party_count);
+
+                        for (size_t i = 0; i < snapshots.size(); ++i)
+                        {
+                            if (snapshots[i].bits.size() != current_size)
+                            {
+                                throw std::runtime_error("Incomplete bit results from party " + std::to_string(snapshots[i].party_id));
+                            }
+                            b_shares.push_back(algebra::RingShare{snapshots[i].party_id, noise::ring_from_raw(snapshots[i].bits[item].b)});
+                        }
+
+                        noise::RingElement b = noise::RingElement::zero();
+                        if (!algebra::RingOpen::robust_open(b_shares, threshold, 0, &b))
+                        {
+                            throw std::runtime_error("Failed to robust open bit shares");
+                        }
+
+                        success = success && ((b * b) == b);
+                    }
 
                     const uint64_t completed = item + 1;
                     const uint64_t percent = (completed * 100) / current_size;
