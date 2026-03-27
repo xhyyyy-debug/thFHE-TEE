@@ -468,6 +468,7 @@ PreprocessingRequirements compute_preprocessing_requirements(const DkgParams& pa
     switch (params.keyset_mode)
     {
     case KeysetMode::kStandard:
+    {
         out.noise_batches.push_back(regular_pk_noise(params.regular));
         out.noise_batches.push_back(regular_ksk_noise(params.regular));
         out.noise_batches.push_back(regular_pksk_noise(params.regular));
@@ -504,6 +505,7 @@ PreprocessingRequirements compute_preprocessing_requirements(const DkgParams& pa
             out.total_triples += sns_glwe_sk_bits * sns_compression_sk_bits;
         }
         break;
+    }
     case KeysetMode::kDecompressionOnly:
         out.noise_batches.push_back(regular_decompression_noise(params.regular));
         out.total_triples = 0;

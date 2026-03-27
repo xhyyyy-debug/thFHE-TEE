@@ -13,6 +13,8 @@
 
 namespace
 {
+constexpr int kGrpcMessageLimitBytes = 512 * 1024 * 1024;
+
 uint64_t parse_u64(const char* text)
 {
     return std::stoull(text);
@@ -39,8 +41,8 @@ int main(int argc, const char* argv[])
         std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
         stubs.reserve(peers.size());
         grpc::ChannelArguments channel_args;
-        channel_args.SetMaxReceiveMessageSize(64 * 1024 * 1024);
-        channel_args.SetMaxSendMessageSize(64 * 1024 * 1024);
+        channel_args.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
+        channel_args.SetMaxSendMessageSize(kGrpcMessageLimitBytes);
 
         for (const auto& peer : peers)
         {

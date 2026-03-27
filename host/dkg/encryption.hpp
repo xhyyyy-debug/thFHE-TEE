@@ -13,6 +13,12 @@ namespace host
 {
 namespace dkg
 {
+struct PublicSeed
+{
+    uint64_t low = 0;
+    uint64_t high = 0;
+};
+
 struct SharedLweCiphertext
 {
     std::vector<noise::RingElementRaw> a;

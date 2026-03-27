@@ -318,7 +318,7 @@ private:
             (hash_ring(a) << 1U) ^
             (hash_ring(b) << 3U) ^
             (hash_ring(c) << 5U) ^
-            0x545249504c454f5554ULL);
+            0x545249504f555454ULL);
     }
 };
 } // namespace mpc

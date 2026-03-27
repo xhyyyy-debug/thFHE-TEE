@@ -1,3 +1,8 @@
+set_source_files_properties(
+    ${HOST_GEN_DIR}/noise_u.c
+    PROPERTIES GENERATED TRUE
+)
+
 add_executable(noise_party
     noise_party_main.cpp
     ${HOST_GEN_DIR}/noise_u.c
@@ -12,6 +17,7 @@ target_include_directories(noise_party
 target_link_libraries(noise_party
     PRIVATE
         host_protocol
+        host_dkg
         noise_grpc
         algebra_sharing
         protobuf::libprotobuf
@@ -24,6 +30,7 @@ target_link_libraries(noise_party
 )
 
 add_dependencies(noise_party noise_enclave_sign)
+add_dependencies(noise_party noise_host_edge)
 
 if (NOT DEFINED NOISE_SIGNED_ENCLAVE)
     message(FATAL_ERROR "NOISE_SIGNED_ENCLAVE not set. Ensure enclave is configured before host.")

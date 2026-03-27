@@ -50,7 +50,7 @@ Before running preprocessing, it is useful to inspect how many bits / triples / 
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/noise_preproc_plan \
+  --entrypoint /app/build/host/apps/noise_preproc_plan \
   controller \
   /app/noise.docker.conf
 ```
@@ -70,7 +70,7 @@ Run preprocessing:
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/noise_preproc \
+  --entrypoint /app/build/host/apps/noise_preproc \
   controller \
   1001 /app/noise.docker.conf /artifacts/preproc
 ```
@@ -99,7 +99,7 @@ Then start one online keygen round:
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/noise_keygen \
+  --entrypoint /app/build/host/apps/noise_keygen \
   controller \
   2001 1001 /app/noise.docker.conf /artifacts/preproc /artifacts/keygen
 ```
@@ -216,9 +216,9 @@ Edit `docker-compose.yml` if you want to change:
 docker compose --profile base build base
 docker compose build
 docker compose up -d party1 party2 party3 party4
-docker compose run --rm --entrypoint /app/build/host/noise_preproc_plan controller /app/noise.docker.conf
-docker compose run --rm --entrypoint /app/build/host/noise_preproc controller 1001 /app/noise.docker.conf /artifacts/preproc
-docker compose run --rm --entrypoint /app/build/host/noise_keygen controller 2001 1001 /app/noise.docker.conf /artifacts/preproc /artifacts/keygen
+docker compose run --rm --entrypoint /app/build/host/apps/noise_preproc_plan controller /app/noise.docker.conf
+docker compose run --rm --entrypoint /app/build/host/apps/noise_preproc controller 1001 /app/noise.docker.conf /artifacts/preproc
+docker compose run --rm --entrypoint /app/build/host/apps/noise_keygen controller 2001 1001 /app/noise.docker.conf /artifacts/preproc /artifacts/keygen
 docker compose down
 ```
 

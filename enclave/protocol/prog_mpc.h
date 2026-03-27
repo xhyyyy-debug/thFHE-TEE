@@ -46,8 +46,8 @@ public:
         storage_auth_key_ = generate_storage_auth_key();
 
         const prss::SessionId128 sid{
-            mix64((party_id << 40U) ^ (party_count << 16U) ^ threshold ^ 0x50525353ULL),
-            mix64((party_id << 20U) ^ (party_count << 4U) ^ (threshold << 48U) ^ 0x50525a53ULL)
+            mix64((party_count << 16U) ^ threshold ^ 0x50525353ULL),
+            mix64((party_count << 4U) ^ (threshold << 48U) ^ 0x50525a53ULL)
         };
         int status = prss_state_.init_fixed(party_id, party_count, threshold, sid);
         if (status != kOk)
@@ -368,7 +368,7 @@ public:
 
     static bool verify_ack(const AckMessage& ack)
     {
-        return ack.accepted == 1 && ack.sigma == sign_ack(ack.round_id, ack.acking_party, ack.for_sender);
+        return noise::verify_ack(ack);
     }
 
     static RingElementRaw reconstruct_secret(const SharePoint* shares, size_t share_count)
@@ -751,10 +751,6 @@ private:
         return mix64(storage_auth_key_ ^ round_id ^ (sender_id << 5U) ^ (x << 19U) ^ (hash_ring(y) << 1U) ^ 0x4e4f4953454f5554ULL);
     }
 
-    static uint64_t sign_ack(uint64_t round_id, uint64_t acking_party, uint64_t for_sender)
-    {
-        return mix64(round_id ^ acking_party ^ (for_sender << 17U) ^ 0x41434bULL);
-    }
 };
 } // namespace noise
 

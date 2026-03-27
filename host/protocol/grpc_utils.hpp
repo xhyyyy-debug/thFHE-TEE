@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "../../enclave/prog_mpc.h"
+#include "../../enclave/common/noise_types.h"
 #include "../config/config.hpp"
 #include "control_protocol.hpp"
 

@@ -17,7 +17,7 @@
 #include <openenclave/host.h>
 
 #include "../../algebra/sharing/open.hpp"
-#include "../../enclave/prog_mpc.h"
+#include "../../enclave/common/noise_types.h"
 #include "../config/config.hpp"
 #include "../dkg/encryption.hpp"
 #include "../dkg/planner.hpp"
@@ -29,6 +29,8 @@
 
 namespace
 {
+constexpr int kGrpcMessageLimitBytes = 512 * 1024 * 1024;
+
 void check_oe(oe_result_t result, const char* message)
 {
     if (result != OE_OK)
@@ -418,6 +420,7 @@ private:
             wait_for_peers_ready(round_id, chunk_start);
             const uint64_t chunk_size = std::min<uint64_t>(noise::kMaxParallelBatch, batch_size - chunk_start);
             GeneratedChunk chunk = generate_chunk(round_id, chunk_start, chunk_size);
+            wait_for_peers_generated(round_id, chunk_start, chunk_size);
             send_chunk(chunk_start, chunk);
             wait_for_chunk(round_id, chunk_start);
             finalize_chunk(round_id, chunk_start);
@@ -443,6 +446,7 @@ private:
             wait_for_triple_peers_ready(round_id, chunk_start);
             const uint64_t chunk_size = std::min<uint64_t>(noise::kMaxParallelBatch, batch_size - chunk_start);
             GeneratedTripleChunk chunk = generate_triple_chunk(round_id, chunk_start, chunk_size);
+            wait_for_triple_peers_generated(round_id, chunk_start, chunk_size);
             send_triple_chunk(chunk);
             wait_for_triple_chunk(round_id, chunk_start);
             finalize_triple_chunk(round_id, chunk_start);
@@ -468,6 +472,7 @@ private:
             wait_for_bit_peers_ready(round_id, chunk_start);
             const uint64_t chunk_size = std::min<uint64_t>(noise::kMaxParallelBatch, batch_size - chunk_start);
             GeneratedBitChunk chunk = generate_bit_chunk(round_id, chunk_start, chunk_size);
+            wait_for_bit_peers_generated(round_id, chunk_start, chunk_size);
             send_bit_chunk(chunk);
             wait_for_bit_chunk(round_id, chunk_start);
             finalize_bit_chunk(round_id, chunk_start);
@@ -524,7 +529,7 @@ private:
             {
                 round_.local_secrets[chunk_start + offset] = chunk.local_secrets[offset];
             }
-            round_.current_item = chunk_start;
+            round_.current_item = chunk_start + chunk_size;
         }
 
         log("batch " + std::to_string(round_id) + ": enclave generated chunk start=" + std::to_string(chunk_start) + " size=" + std::to_string(chunk_size));
@@ -563,7 +568,7 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            triple_round_.current_item = chunk_start;
+            triple_round_.current_item = chunk_start + chunk_size;
             for (uint64_t offset = 0; offset < chunk_size; ++offset)
             {
                 if (!triple_received_from_[offset][party_id_ - 1])
@@ -609,7 +614,7 @@ private:
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            bit_round_.current_item = chunk_start;
+            bit_round_.current_item = chunk_start + chunk_size;
             for (uint64_t offset = 0; offset < chunk_size; ++offset)
             {
                 if (!bit_received_from_[offset][party_id_ - 1])
@@ -935,7 +940,7 @@ private:
         for (size_t offset = 0; offset < message.acks.size(); ++offset)
         {
             const auto& ack = message.acks[offset];
-            if (!noise::ProgMPCHandler::verify_ack(ack))
+            if (!noise::verify_ack(ack))
             {
                 throw std::runtime_error("Invalid batch ack signature");
             }
@@ -1913,6 +1918,7 @@ private:
             return;
         }
 
+        clear_finished_protocol_states_locked();
         round_ = RoundState{};
         round_.batch_round_id = round_id;
         round_.batch_size = batch_size;
@@ -1935,6 +1941,7 @@ private:
             return;
         }
 
+        clear_finished_protocol_states_locked();
         triple_round_ = TripleRoundState{};
         triple_round_.batch_round_id = round_id;
         triple_round_.batch_size = batch_size;
@@ -1955,12 +1962,32 @@ private:
             return;
         }
 
+        clear_finished_protocol_states_locked();
         bit_round_ = BitRoundState{};
         bit_round_.batch_round_id = round_id;
         bit_round_.batch_size = batch_size;
         bit_round_.state = "WAITING";
         bit_round_.bits.assign(batch_size, noise::BitShare{});
         clear_bit_chunk_tracking_locked();
+    }
+
+    void clear_finished_protocol_states_locked()
+    {
+        if (round_.state == "DONE" || round_.state == "ERROR")
+        {
+            round_ = RoundState{};
+            clear_chunk_tracking_locked();
+        }
+        if (triple_round_.state == "TRIPLE_DONE" || triple_round_.state == "ERROR")
+        {
+            triple_round_ = TripleRoundState{};
+            clear_triple_chunk_tracking_locked();
+        }
+        if (bit_round_.state == "BIT_DONE" || bit_round_.state == "ERROR")
+        {
+            bit_round_ = BitRoundState{};
+            clear_bit_chunk_tracking_locked();
+        }
     }
 
     void prepare_chunk_locked(uint64_t chunk_start, const std::vector<uint64_t>& round_ids)
@@ -2024,7 +2051,7 @@ private:
         return std::all_of(
             triple_round_.current_chunk_received_counts.begin(),
             triple_round_.current_chunk_received_counts.end(),
-            [this](uint64_t count) { return count >= (2 * threshold_ + 1); });
+            [this](uint64_t count) { return count == party_count_; });
     }
 
     bool bit_chunk_ready_locked() const
@@ -2037,7 +2064,7 @@ private:
         return std::all_of(
             bit_round_.current_chunk_received_counts.begin(),
             bit_round_.current_chunk_received_counts.end(),
-            [this](uint64_t count) { return count >= (2 * threshold_ + 1); });
+            [this](uint64_t count) { return count == party_count_; });
     }
 
     void prepare_triple_chunk_locked(uint64_t chunk_start, const std::vector<uint64_t>& round_ids)
@@ -2142,14 +2169,29 @@ private:
         wait_for_protocol_peers_ready(round_id, chunk_start, ProtocolMode::kNoise);
     }
 
+    void wait_for_peers_generated(uint64_t round_id, uint64_t chunk_start, uint64_t chunk_size)
+    {
+        wait_for_protocol_peers_generated(round_id, chunk_start, chunk_size, ProtocolMode::kNoise);
+    }
+
     void wait_for_triple_peers_ready(uint64_t round_id, uint64_t chunk_start)
     {
         wait_for_protocol_peers_ready(round_id, chunk_start, ProtocolMode::kTriple);
     }
 
+    void wait_for_triple_peers_generated(uint64_t round_id, uint64_t chunk_start, uint64_t chunk_size)
+    {
+        wait_for_protocol_peers_generated(round_id, chunk_start, chunk_size, ProtocolMode::kTriple);
+    }
+
     void wait_for_bit_peers_ready(uint64_t round_id, uint64_t chunk_start)
     {
         wait_for_protocol_peers_ready(round_id, chunk_start, ProtocolMode::kBit);
+    }
+
+    void wait_for_bit_peers_generated(uint64_t round_id, uint64_t chunk_start, uint64_t chunk_size)
+    {
+        wait_for_protocol_peers_generated(round_id, chunk_start, chunk_size, ProtocolMode::kBit);
     }
 
     void wait_for_protocol_peers_ready(uint64_t round_id, uint64_t chunk_start, ProtocolMode mode)
@@ -2200,6 +2242,62 @@ private:
 
         throw std::runtime_error(
             std::string("Timed out waiting for peers to reach ") +
+            mode_batch_label(mode) +
+            " chunk start " +
+            std::to_string(chunk_start));
+    }
+
+    void wait_for_protocol_peers_generated(uint64_t round_id, uint64_t chunk_start, uint64_t chunk_size, ProtocolMode mode)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+        const uint64_t generated_marker = chunk_start + chunk_size;
+
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            bool ready = true;
+
+            for (size_t i = 0; i < peers_.size(); ++i)
+            {
+                if (static_cast<uint64_t>(i + 1) == party_id_)
+                {
+                    continue;
+                }
+
+                noise_rpc::StatusRequest request;
+                request.set_full(false);
+                grpc::ClientContext context;
+                noise_rpc::StatusReply response;
+                const auto rpc_status = stubs_[i]->Status(&context, request, &response);
+                if (!rpc_status.ok())
+                {
+                    throw std::runtime_error("Status RPC failed for party " + std::to_string(i + 1) + ": " + rpc_status.error_message());
+                }
+                const host::StatusSnapshot status = host::parse_status_proto(response);
+
+                if (status.state == "ERROR")
+                {
+                    throw std::runtime_error("Peer entered ERROR state: party " + std::to_string(status.party_id));
+                }
+
+                if (status.round_id != round_id ||
+                    status.completed_items != chunk_start ||
+                    status.current_item < generated_marker)
+                {
+                    ready = false;
+                    break;
+                }
+            }
+
+            if (ready)
+            {
+                return;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+
+        throw std::runtime_error(
+            std::string("Timed out waiting for peers to generate ") +
             mode_batch_label(mode) +
             " chunk start " +
             std::to_string(chunk_start));
@@ -2434,8 +2532,8 @@ int main(int argc, const char* argv[])
         NoisePartyServiceImpl service(&party);
         grpc::ServerBuilder builder;
         const std::string listen_addr = "0.0.0.0:" + std::to_string(self.endpoint.port);
-        builder.SetMaxReceiveMessageSize(64 * 1024 * 1024);
-        builder.SetMaxSendMessageSize(64 * 1024 * 1024);
+        builder.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
+        builder.SetMaxSendMessageSize(kGrpcMessageLimitBytes);
         builder.AddListeningPort(listen_addr, grpc::InsecureServerCredentials());
         builder.RegisterService(&service);
         std::unique_ptr<grpc::Server> server(builder.BuildAndStart());

@@ -103,6 +103,16 @@ inline uint64_t mix64(uint64_t value)
     return value;
 }
 
+inline uint64_t sign_ack(uint64_t round_id, uint64_t acking_party, uint64_t for_sender)
+{
+    return mix64(round_id ^ acking_party ^ (for_sender << 17U) ^ 0x41434bULL);
+}
+
+inline bool verify_ack(const AckMessage& ack)
+{
+    return ack.accepted == 1 && ack.sigma == sign_ack(ack.round_id, ack.acking_party, ack.for_sender);
+}
+
 inline RingElement ring_from_raw(const RingElementRaw& raw)
 {
     RingElement value{};

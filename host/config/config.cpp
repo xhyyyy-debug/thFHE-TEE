@@ -5,7 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "../../enclave/prog_mpc.h"
+#include "../../enclave/common/noise_types.h"
 
 namespace host
 {

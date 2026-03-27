@@ -76,6 +76,18 @@ add_custom_command(
     COMMENT "Generating Open Enclave untrusted edge routines"
 )
 
+set_source_files_properties(
+    ${HOST_GEN_DIR}/noise_u.c
+    ${HOST_GEN_DIR}/noise_u.h
+    PROPERTIES GENERATED TRUE
+)
+
+add_custom_target(noise_host_edge
+    DEPENDS
+        ${HOST_GEN_DIR}/noise_u.c
+        ${HOST_GEN_DIR}/noise_u.h
+)
+
 add_custom_command(
     OUTPUT
         ${PROTO_GEN_DIR}/noise.pb.cc

@@ -11,7 +11,7 @@
 
 #include <grpcpp/grpcpp.h>
 
-#include "../../enclave/prog_mpc.h"
+#include "../../enclave/common/noise_types.h"
 #include "../config/config.hpp"
 #include "../dkg/planner.hpp"
 #include "../dkg/preprocessing_store.hpp"
@@ -19,6 +19,8 @@
 
 namespace
 {
+constexpr int kGrpcMessageLimitBytes = 512 * 1024 * 1024;
+
 enum class Mode
 {
     kNoise,
@@ -114,6 +116,27 @@ std::string format_progress_line(
     return out.str();
 }
 
+std::chrono::seconds preprocessing_timeout(Mode mode, uint64_t batch_size)
+{
+    switch (mode)
+    {
+    case Mode::kBit:
+    case Mode::kTriple:
+        return std::chrono::minutes(10);
+    case Mode::kNoise:
+        if (batch_size >= 1000000)
+        {
+            return std::chrono::hours(2);
+        }
+        if (batch_size >= 100000)
+        {
+            return std::chrono::minutes(30);
+        }
+        return std::chrono::minutes(10);
+    }
+    return std::chrono::minutes(10);
+}
+
 void start_round(
     Mode mode,
     uint64_t round_id,
@@ -161,10 +184,18 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
     std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>>& stubs,
     const std::vector<host::Endpoint>& peers)
 {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    const auto timeout = preprocessing_timeout(mode, batch_size);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     const auto start = std::chrono::steady_clock::now();
     std::vector<host::StatusSnapshot> snapshots(stubs.size());
     uint64_t next_progress_mark = 5;
+    auto last_heartbeat = start;
+
+    std::cout << format_progress_line(label, 0, batch_size, std::chrono::steady_clock::duration::zero())
+              << std::endl;
+    std::cout << "[preproc] " << label
+              << " timeout=" << format_duration(std::chrono::duration_cast<std::chrono::seconds>(timeout))
+              << std::endl;
 
     while (std::chrono::steady_clock::now() < deadline)
     {
@@ -182,6 +213,10 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
                 throw std::runtime_error("Status RPC failed for " + peers[i].host + ": " + status.error_message());
             }
             snapshots[i] = host::parse_status_proto(reply);
+            if (snapshots[i].state == "ERROR")
+            {
+                throw std::runtime_error("Preprocessing round failed on party " + std::to_string(snapshots[i].party_id));
+            }
             all_done = all_done &&
                 snapshots[i].state == done_state(mode) &&
                 snapshots[i].completed_items == batch_size;
@@ -199,6 +234,19 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
                 std::chrono::steady_clock::now() - start)
                       << std::endl;
             next_progress_mark += 5;
+            last_heartbeat = std::chrono::steady_clock::now();
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (!all_done && now - last_heartbeat >= std::chrono::seconds(30))
+        {
+            std::cout << format_progress_line(
+                label,
+                min_completed,
+                batch_size,
+                now - start)
+                      << std::endl;
+            last_heartbeat = now;
         }
 
         if (all_done)
@@ -317,8 +365,8 @@ int main(int argc, const char* argv[])
         std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
         stubs.reserve(peers.size());
         grpc::ChannelArguments channel_args;
-        channel_args.SetMaxReceiveMessageSize(64 * 1024 * 1024);
-        channel_args.SetMaxSendMessageSize(64 * 1024 * 1024);
+        channel_args.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
+        channel_args.SetMaxSendMessageSize(kGrpcMessageLimitBytes);
 
         for (const auto& peer : peers)
         {

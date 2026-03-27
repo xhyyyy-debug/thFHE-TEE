@@ -1,5 +1,3 @@
-version: "3.9"
-
 x-party-common: &party-common
   build:
     context: .
@@ -9,6 +7,7 @@ x-party-common: &party-common
   working_dir: /app
   volumes:
     - ./artifacts:/artifacts
+    - ./noise.docker.conf:/app/noise.docker.conf:ro
   devices:
     - /dev/sgx_enclave:/dev/sgx_enclave
     - /dev/sgx_provision:/dev/sgx_provision
@@ -30,7 +29,7 @@ services:
       - noise-net
     ports:
       - "7005:7000"
-    entrypoint: ["/app/build/host/noise_party"]
+    entrypoint: ["/app/build/host/apps/noise_party"]
     command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party1"]
 
   party2:
@@ -40,7 +39,7 @@ services:
       - noise-net
     ports:
       - "7006:7000"
-    entrypoint: ["/app/build/host/noise_party"]
+    entrypoint: ["/app/build/host/apps/noise_party"]
     command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party2"]
 
   party3:
@@ -50,7 +49,7 @@ services:
       - noise-net
     ports:
       - "7007:7000"
-    entrypoint: ["/app/build/host/noise_party"]
+    entrypoint: ["/app/build/host/apps/noise_party"]
     command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party3"]
 
   party4:
@@ -60,7 +59,7 @@ services:
       - noise-net
     ports:
       - "7008:7000"
-    entrypoint: ["/app/build/host/noise_party"]
+    entrypoint: ["/app/build/host/apps/noise_party"]
     command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party4"]
 
   controller:
@@ -70,7 +69,7 @@ services:
       - tools
     networks:
       - noise-net
-    entrypoint: ["/app/build/host/noise_ctl"]
+    entrypoint: ["/app/build/host/apps/noise_ctl"]
     command: ["1", "26469202", "100000", "/app/noise.docker.conf"]
 
 networks:

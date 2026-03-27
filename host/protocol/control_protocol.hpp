@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "../../enclave/prog_mpc.h"
+#include "../../enclave/common/noise_types.h"
 #include "../transport/network.hpp"
 
 namespace host

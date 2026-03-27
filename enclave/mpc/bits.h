@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 #include <mbedtls/aes.h>
@@ -67,6 +68,11 @@ public:
     {
         if (packages == nullptr || batch_count == 0 || batch_count > active_batch_count_)
         {
+            std::printf(
+                "[enclave][bit_store] invalid batch packages=%p batch_count=%zu active_batch_count=%zu\n",
+                static_cast<const void*>(packages),
+                batch_count,
+                active_batch_count_);
             return kInvalidArgument;
         }
 
@@ -75,6 +81,13 @@ public:
             const BitVPackage& pkg = packages[i];
             if (pkg.round_id == 0 || pkg.round_id != active_round_ids_[i] || pkg.sender_id == 0 || pkg.sender_id > n_)
             {
+                std::printf(
+                    "[enclave][bit_store] invalid package index=%zu round=%llu expected_round=%llu sender=%llu n=%llu\n",
+                    i,
+                    static_cast<unsigned long long>(pkg.round_id),
+                    static_cast<unsigned long long>(active_round_ids_[i]),
+                    static_cast<unsigned long long>(pkg.sender_id),
+                    static_cast<unsigned long long>(n_));
                 return kInvalidArgument;
             }
 
@@ -130,12 +143,32 @@ public:
             RingElement v_open = RingElement::zero();
             if (!algebra::ShamirRing::reconstruct(recon_shares, &v_open))
             {
+                std::printf(
+                    "[enclave][bit_done] reconstruct failed round=%llu index=%zu received=%llu threshold=%llu\n",
+                    static_cast<unsigned long long>(active_round_ids_[i]),
+                    i,
+                    static_cast<unsigned long long>(received_counts_[i]),
+                    static_cast<unsigned long long>(t_));
                 return kVerificationFailed;
             }
 
             RingElement r = RingElement::zero();
             if (!RingElement::solve(v_open, &r))
             {
+                const RingElementRaw v_raw = raw_from_ring(v_open);
+                std::printf(
+                    "[enclave][bit_done] solve failed round=%llu index=%zu received=%llu v=(%016llx.%016llx,%016llx.%016llx,%016llx.%016llx,%016llx.%016llx)\n",
+                    static_cast<unsigned long long>(active_round_ids_[i]),
+                    i,
+                    static_cast<unsigned long long>(received_counts_[i]),
+                    static_cast<unsigned long long>(v_raw.coeffs[0].lo),
+                    static_cast<unsigned long long>(v_raw.coeffs[0].hi),
+                    static_cast<unsigned long long>(v_raw.coeffs[1].lo),
+                    static_cast<unsigned long long>(v_raw.coeffs[1].hi),
+                    static_cast<unsigned long long>(v_raw.coeffs[2].lo),
+                    static_cast<unsigned long long>(v_raw.coeffs[2].hi),
+                    static_cast<unsigned long long>(v_raw.coeffs[3].lo),
+                    static_cast<unsigned long long>(v_raw.coeffs[3].hi));
                 return kVerificationFailed;
             }
 
