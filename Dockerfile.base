@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
+    cmake \
     wget \
     curl \
     unzip \
@@ -47,9 +48,6 @@ RUN apt-get update && apt-get install -y \
     libsgx-dcap-ql \
     libsgx-dcap-ql-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# 安装较新 cmake
-RUN pip3 install --no-cache-dir cmake
 
 # ---------- Open Enclave：使用本地 deb ----------
 COPY thirdparty/Ubuntu_2204_open-enclave_0.19.13_amd64.deb /tmp/openenclave.deb
