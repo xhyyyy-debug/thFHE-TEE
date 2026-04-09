@@ -3,6 +3,20 @@ set_source_files_properties(
     PROPERTIES GENERATED TRUE
 )
 
+set(HOST_RPC_SUPPORT_LIBS
+    protobuf::libprotobuf
+    gRPC::grpc++
+    gRPC::grpc
+    Threads::Threads
+)
+
+if (TARGET utf8_range::utf8_range AND TARGET utf8_range::utf8_validity)
+    list(APPEND HOST_RPC_SUPPORT_LIBS
+        utf8_range::utf8_range
+        utf8_range::utf8_validity
+    )
+endif()
+
 add_executable(party_node
     party_node_main.cpp
     ${HOST_GEN_DIR}/dkg_u.c
@@ -20,13 +34,8 @@ target_link_libraries(party_node
         host_dkg
         dkg_grpc
         algebra_sharing
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
         openenclave::oehost
-        Threads::Threads
+        ${HOST_RPC_SUPPORT_LIBS}
 )
 
 add_dependencies(party_node dkg_enclave_sign)
@@ -61,12 +70,7 @@ target_link_libraries(round_controller
         host_dkg
         dkg_grpc
         algebra_sharing
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        Threads::Threads
+        ${HOST_RPC_SUPPORT_LIBS}
 )
 
 add_executable(preprocessing_plan
@@ -99,12 +103,7 @@ target_link_libraries(preprocessing_controller
         host_protocol
         dkg_grpc
         algebra_sharing
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        Threads::Threads
+        ${HOST_RPC_SUPPORT_LIBS}
 )
 
 add_executable(keygen_controller
@@ -122,11 +121,6 @@ target_link_libraries(keygen_controller
         host_protocol
         dkg_grpc
         algebra_sharing
-        protobuf::libprotobuf
-        gRPC::grpc++
-        gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        Threads::Threads
+        ${HOST_RPC_SUPPORT_LIBS}
 )
 

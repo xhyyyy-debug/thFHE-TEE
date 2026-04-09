@@ -7,9 +7,26 @@ set(PROTO_FILE ${PROTO_DIR}/dkg.proto)
 find_package(OpenEnclave CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
-find_package(absl CONFIG REQUIRED)
-find_package(utf8_range CONFIG REQUIRED)
+find_package(gRPC CONFIG QUIET)
+find_package(PkgConfig REQUIRED)
+find_package(absl CONFIG QUIET)
+find_package(utf8_range CONFIG QUIET)
+
+if (NOT TARGET gRPC::grpc++ OR NOT TARGET gRPC::grpc)
+    pkg_check_modules(GRPC REQUIRED IMPORTED_TARGET grpc grpc++)
+
+    add_library(gRPC::grpc INTERFACE IMPORTED)
+    target_link_libraries(gRPC::grpc
+        INTERFACE
+            PkgConfig::GRPC
+    )
+
+    add_library(gRPC::grpc++ INTERFACE IMPORTED)
+    target_link_libraries(gRPC::grpc++
+        INTERFACE
+            PkgConfig::GRPC
+    )
+endif()
 
 message(STATUS "Protobuf_VERSION = ${Protobuf_VERSION}")
 message(STATUS "Protobuf_INCLUDE_DIRS = ${Protobuf_INCLUDE_DIRS}")
@@ -27,8 +44,13 @@ elseif (DEFINED gRPC_CPP_PLUGIN_EXECUTABLE)
     set(GRPC_CPP_PLUGIN_EXECUTABLE ${gRPC_CPP_PLUGIN_EXECUTABLE})
 elseif (DEFINED GRPC_CPP_PLUGIN_EXECUTABLE)
     set(GRPC_CPP_PLUGIN_EXECUTABLE ${GRPC_CPP_PLUGIN_EXECUTABLE})
+elseif (EXISTS "/usr/bin/grpc_cpp_plugin")
+    set(GRPC_CPP_PLUGIN_EXECUTABLE /usr/bin/grpc_cpp_plugin)
 else()
-    message(FATAL_ERROR "gRPC C++ plugin executable not found")
+    find_program(GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
+    if (NOT GRPC_CPP_PLUGIN_EXECUTABLE)
+        message(FATAL_ERROR "gRPC C++ plugin executable not found")
+    endif()
 endif()
 
 if (TARGET openenclave::oeedger8r)
@@ -122,12 +144,24 @@ target_link_libraries(dkg_grpc
         protobuf::libprotobuf
         gRPC::grpc++
         gRPC::grpc
-        utf8_range::utf8_range
-        utf8_range::utf8_validity
-        absl::base
-        absl::strings
-        absl::log
 )
+
+foreach(ABSL_TARGET absl::base absl::strings absl::log)
+    if (TARGET ${ABSL_TARGET})
+        target_link_libraries(dkg_grpc
+            PUBLIC
+                ${ABSL_TARGET}
+        )
+    endif()
+endforeach()
+
+if (TARGET utf8_range::utf8_range AND TARGET utf8_range::utf8_validity)
+    target_link_libraries(dkg_grpc
+        PUBLIC
+            utf8_range::utf8_range
+            utf8_range::utf8_validity
+    )
+endif()
 
 add_subdirectory(transport)
 add_subdirectory(config)

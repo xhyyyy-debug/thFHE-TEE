@@ -29,19 +29,25 @@ RUN apt-get update && apt-get install -y \
     uuid-dev \
     nasm \
     llvm-11 \
+    libgrpc++-dev \
+    libgrpc-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    libabsl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Intel SGX 源
+# Intel SGX repository.
 RUN echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' \
     > /etc/apt/sources.list.d/intel-sgx.list && \
     curl -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add -
 
-# Microsoft 源
+# Microsoft repository required by Open Enclave runtime dependencies.
 RUN echo 'deb [arch=amd64] https://packages.microsoft.com/ubuntu/22.04/prod jammy main' \
     > /etc/apt/sources.list.d/msprod.list && \
     curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | apt-key add -
 
-# SGX / DCAP 运行依赖
+# SGX / DCAP runtime dependencies.
 RUN apt-get update && apt-get install -y \
     libsgx-enclave-common \
     libsgx-quote-ex \
@@ -49,7 +55,7 @@ RUN apt-get update && apt-get install -y \
     libsgx-dcap-ql-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------- Open Enclave：使用本地 deb ----------
+# Install Open Enclave from the bundled deb package.
 COPY thirdparty/Ubuntu_2204_open-enclave_0.19.13_amd64.deb /tmp/openenclave.deb
 
 RUN dpkg-deb -I /tmp/openenclave.deb >/dev/null && \
@@ -57,38 +63,11 @@ RUN dpkg-deb -I /tmp/openenclave.deb >/dev/null && \
     dpkg -i /tmp/openenclave.deb && \
     rm -f /tmp/openenclave.deb
 
-# ---------- gRPC：使用 git clone ----------
-RUN git config --global http.version HTTP/1.1 && \
-    git config --global http.postBuffer 524288000 && \
-    git config --global advice.detachedHead false && \
-    git clone --depth 1 --branch v1.60.0 \
-      --recurse-submodules --shallow-submodules \
-      https://github.com/grpc/grpc.git /tmp/grpc && \
-    cmake -S /tmp/grpc -B /tmp/grpc/build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=/opt/grpc \
-      -DCMAKE_CXX_STANDARD=17 \
-      -DCMAKE_CXX_STANDARD_REQUIRED=ON \
-      -DCMAKE_CXX_EXTENSIONS=OFF \
-      -DBUILD_SHARED_LIBS=ON \
-      -DgRPC_INSTALL=ON \
-      -DgRPC_BUILD_TESTS=OFF \
-      -DgRPC_ABSL_PROVIDER=module \
-      -DgRPC_CARES_PROVIDER=package \
-      -DgRPC_RE2_PROVIDER=package \
-      -DgRPC_SSL_PROVIDER=package \
-      -DgRPC_ZLIB_PROVIDER=package \
-      -DgRPC_PROTOBUF_PROVIDER=module && \
-    cmake --build /tmp/grpc/build -j"$(nproc)" && \
-    cmake --install /tmp/grpc/build && \
-    rm -rf /tmp/grpc
+# Prefer distro gRPC/Protobuf packages to avoid fragile source builds during image creation.
+ENV PATH="/opt/openenclave/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/app/build/host:/opt/openenclave/lib:${LD_LIBRARY_PATH}"
+ENV CMAKE_PREFIX_PATH="/opt/openenclave/lib/openenclave/cmake;/usr;/usr/lib/x86_64-linux-gnu/cmake;/usr/lib/x86_64-linux-gnu/cmake/grpc;/usr/lib/x86_64-linux-gnu/cmake/protobuf"
 
-# 环境变量
-ENV PATH="/opt/grpc/bin:/opt/openenclave/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/app/build/host:/opt/grpc/lib:/opt/grpc/lib64:/opt/openenclave/lib:${LD_LIBRARY_PATH}"
-ENV CMAKE_PREFIX_PATH="/opt/grpc;/opt/openenclave/lib/openenclave/cmake"
-
-# 调试用：确认关键 cmake config 和动态库存在
+# Print package-discovery locations for easier debugging inside the base image.
 RUN find /opt/openenclave/lib/openenclave/cmake -maxdepth 1 -type f | sort && \
-    find /opt/grpc/lib/cmake -maxdepth 3 -type f | sort | head -n 200 && \
-    find /opt/grpc/lib -maxdepth 1 \( -name 'libgrpc*.so*' -o -name 'libprotobuf.so*' -o -name 'libutf8*.so*' \) | sort || true
+    find /usr/lib/x86_64-linux-gnu/cmake -maxdepth 2 -type f | grep -E 'grpc|protobuf|absl' | sort | head -n 200 || true
