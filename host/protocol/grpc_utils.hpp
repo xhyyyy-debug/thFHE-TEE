@@ -8,7 +8,7 @@
 #include "../config/config.hpp"
 #include "control_protocol.hpp"
 
-#include "noise.grpc.pb.h"
+#include "dkg.grpc.pb.h"
 
 namespace host
 {
@@ -17,7 +17,7 @@ inline std::string endpoint_to_target(const Endpoint& endpoint)
     return endpoint.host + ":" + std::to_string(endpoint.port);
 }
 
-inline void fill_ring_proto(const noise::RingElementRaw& value, noise_rpc::RingElementRaw* out)
+inline void fill_ring_proto(const noise::RingElementRaw& value, dkg_rpc::RingElementRaw* out)
 {
     out->clear_coeffs();
     for (size_t i = 0; i < 4; ++i)
@@ -28,7 +28,7 @@ inline void fill_ring_proto(const noise::RingElementRaw& value, noise_rpc::RingE
     }
 }
 
-inline noise::RingElementRaw parse_ring_proto(const noise_rpc::RingElementRaw& value)
+inline noise::RingElementRaw parse_ring_proto(const dkg_rpc::RingElementRaw& value)
 {
     noise::RingElementRaw out{};
     const int count = value.coeffs_size();
@@ -40,7 +40,7 @@ inline noise::RingElementRaw parse_ring_proto(const noise_rpc::RingElementRaw& v
     return out;
 }
 
-inline void fill_share_package_proto(const noise::SharePackage& in, noise_rpc::SharePackage* out)
+inline void fill_share_package_proto(const noise::SharePackage& in, dkg_rpc::SharePackage* out)
 {
     out->set_round_id(in.round_id);
     out->set_sender_id(in.sender_id);
@@ -50,7 +50,7 @@ inline void fill_share_package_proto(const noise::SharePackage& in, noise_rpc::S
     fill_ring_proto(in.share_y, out->mutable_share_y());
 }
 
-inline noise::SharePackage parse_share_package_proto(const noise_rpc::SharePackage& in)
+inline noise::SharePackage parse_share_package_proto(const dkg_rpc::SharePackage& in)
 {
     noise::SharePackage out{};
     out.round_id = in.round_id();
@@ -62,7 +62,7 @@ inline noise::SharePackage parse_share_package_proto(const noise_rpc::SharePacka
     return out;
 }
 
-inline void fill_ack_message_proto(const noise::AckMessage& in, noise_rpc::AckMessage* out)
+inline void fill_ack_message_proto(const noise::AckMessage& in, dkg_rpc::AckMessage* out)
 {
     out->set_round_id(in.round_id);
     out->set_acking_party(in.acking_party);
@@ -71,7 +71,7 @@ inline void fill_ack_message_proto(const noise::AckMessage& in, noise_rpc::AckMe
     out->set_accepted(in.accepted);
 }
 
-inline noise::AckMessage parse_ack_message_proto(const noise_rpc::AckMessage& in)
+inline noise::AckMessage parse_ack_message_proto(const dkg_rpc::AckMessage& in)
 {
     noise::AckMessage out{};
     out.round_id = in.round_id();
@@ -82,7 +82,7 @@ inline noise::AckMessage parse_ack_message_proto(const noise_rpc::AckMessage& in
     return out;
 }
 
-inline void fill_share_point_proto(const noise::SharePoint& in, noise_rpc::SharePoint* out)
+inline void fill_share_point_proto(const noise::SharePoint& in, dkg_rpc::SharePoint* out)
 {
     out->set_round_id(in.round_id);
     out->set_x(in.x);
@@ -90,7 +90,7 @@ inline void fill_share_point_proto(const noise::SharePoint& in, noise_rpc::Share
     fill_ring_proto(in.y, out->mutable_y());
 }
 
-inline noise::SharePoint parse_share_point_proto(const noise_rpc::SharePoint& in)
+inline noise::SharePoint parse_share_point_proto(const dkg_rpc::SharePoint& in)
 {
     noise::SharePoint out{};
     out.round_id = in.round_id();
@@ -100,7 +100,7 @@ inline noise::SharePoint parse_share_point_proto(const noise_rpc::SharePoint& in
     return out;
 }
 
-inline void fill_triple_d_package_proto(const noise::TripleDPackage& in, noise_rpc::TripleDPackage* out)
+inline void fill_triple_d_package_proto(const noise::TripleDPackage& in, dkg_rpc::TripleDPackage* out)
 {
     out->set_round_id(in.round_id);
     out->set_sender_id(in.sender_id);
@@ -108,7 +108,7 @@ inline void fill_triple_d_package_proto(const noise::TripleDPackage& in, noise_r
     fill_ring_proto(in.d_share, out->mutable_d_share());
 }
 
-inline noise::TripleDPackage parse_triple_d_package_proto(const noise_rpc::TripleDPackage& in)
+inline noise::TripleDPackage parse_triple_d_package_proto(const dkg_rpc::TripleDPackage& in)
 {
     noise::TripleDPackage out{};
     out.round_id = in.round_id();
@@ -118,7 +118,7 @@ inline noise::TripleDPackage parse_triple_d_package_proto(const noise_rpc::Tripl
     return out;
 }
 
-inline void fill_triple_share_proto(const noise::TripleShare& in, noise_rpc::TripleShare* out)
+inline void fill_triple_share_proto(const noise::TripleShare& in, dkg_rpc::TripleShare* out)
 {
     out->set_round_id(in.round_id);
     out->set_sigma(in.sigma);
@@ -127,7 +127,7 @@ inline void fill_triple_share_proto(const noise::TripleShare& in, noise_rpc::Tri
     fill_ring_proto(in.c, out->mutable_c());
 }
 
-inline noise::TripleShare parse_triple_share_proto(const noise_rpc::TripleShare& in)
+inline noise::TripleShare parse_triple_share_proto(const dkg_rpc::TripleShare& in)
 {
     noise::TripleShare out{};
     out.round_id = in.round_id();
@@ -138,7 +138,7 @@ inline noise::TripleShare parse_triple_share_proto(const noise_rpc::TripleShare&
     return out;
 }
 
-inline void fill_bit_v_package_proto(const noise::BitVPackage& in, noise_rpc::BitVPackage* out)
+inline void fill_bit_v_package_proto(const noise::BitVPackage& in, dkg_rpc::BitVPackage* out)
 {
     out->set_round_id(in.round_id);
     out->set_sender_id(in.sender_id);
@@ -146,7 +146,7 @@ inline void fill_bit_v_package_proto(const noise::BitVPackage& in, noise_rpc::Bi
     fill_ring_proto(in.v_share, out->mutable_v_share());
 }
 
-inline noise::BitVPackage parse_bit_v_package_proto(const noise_rpc::BitVPackage& in)
+inline noise::BitVPackage parse_bit_v_package_proto(const dkg_rpc::BitVPackage& in)
 {
     noise::BitVPackage out{};
     out.round_id = in.round_id();
@@ -156,14 +156,14 @@ inline noise::BitVPackage parse_bit_v_package_proto(const noise_rpc::BitVPackage
     return out;
 }
 
-inline void fill_bit_share_proto(const noise::BitShare& in, noise_rpc::BitShare* out)
+inline void fill_bit_share_proto(const noise::BitShare& in, dkg_rpc::BitShare* out)
 {
     out->set_round_id(in.round_id);
     out->set_sigma(in.sigma);
     fill_ring_proto(in.b, out->mutable_b());
 }
 
-inline noise::BitShare parse_bit_share_proto(const noise_rpc::BitShare& in)
+inline noise::BitShare parse_bit_share_proto(const dkg_rpc::BitShare& in)
 {
     noise::BitShare out{};
     out.round_id = in.round_id();
@@ -176,7 +176,7 @@ inline void fill_keygen_open_share_proto(
     uint64_t round_id,
     uint64_t sender_id,
     const noise::RingElementRaw& share,
-    noise_rpc::KeygenOpenSharePackage* out)
+    dkg_rpc::KeygenOpenSharePackage* out)
 {
     out->set_round_id(round_id);
     out->set_sender_id(sender_id);
@@ -184,7 +184,7 @@ inline void fill_keygen_open_share_proto(
 }
 
 inline noise::RingElementRaw parse_keygen_open_share_proto(
-    const noise_rpc::KeygenOpenSharePackage& in,
+    const dkg_rpc::KeygenOpenSharePackage& in,
     uint64_t* round_id,
     uint64_t* sender_id)
 {
@@ -199,7 +199,7 @@ inline noise::RingElementRaw parse_keygen_open_share_proto(
     return parse_ring_proto(in.share());
 }
 
-inline void fill_status_proto(const StatusSnapshot& in, noise_rpc::StatusReply* out, bool full)
+inline void fill_status_proto(const StatusSnapshot& in, dkg_rpc::StatusReply* out, bool full)
 {
     out->set_party_id(in.party_id);
     out->set_round_id(in.round_id);
@@ -241,7 +241,7 @@ inline void fill_status_proto(const StatusSnapshot& in, noise_rpc::StatusReply* 
     }
 }
 
-inline StatusSnapshot parse_status_proto(const noise_rpc::StatusReply& in)
+inline StatusSnapshot parse_status_proto(const dkg_rpc::StatusReply& in)
 {
     StatusSnapshot out;
     out.party_id = in.party_id();
@@ -284,3 +284,4 @@ inline StatusSnapshot parse_status_proto(const noise_rpc::StatusReply& in)
 } // namespace host
 
 #endif
+

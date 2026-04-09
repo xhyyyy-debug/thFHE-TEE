@@ -1,0 +1,11 @@
+.git/
+.vs/
+.vscode/
+
+build/
+cmake-build-*/
+
+artifacts/
+
+*.log
+*.tmp

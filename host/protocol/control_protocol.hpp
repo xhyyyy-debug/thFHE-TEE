@@ -13,6 +13,8 @@
 
 namespace host
 {
+// Snapshot returned by each party to controller-side tools. It intentionally
+// includes both coarse progress fields and optional debug payloads for diagnosis.
 struct StatusSnapshot
 {
     uint64_t party_id = 0;
@@ -34,6 +36,8 @@ struct StatusSnapshot
 inline std::vector<std::string> split_csv(const std::string& text);
 inline std::vector<std::string> split(const std::string& text, char separator);
 
+// Rings are serialized as hex words so the debugging protocol remains readable
+// while still being lossless for 128-bit coefficient components.
 inline std::string encode_u64_hex(uint64_t value)
 {
     std::ostringstream out;

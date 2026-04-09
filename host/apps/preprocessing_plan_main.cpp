@@ -1,3 +1,6 @@
+// Utility entry point that prints the preprocessing requirements implied by the
+// current runtime configuration and DKG parameter preset.
+
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -9,7 +12,7 @@ int main(int argc, const char* argv[])
 {
     if (argc != 2)
     {
-        std::cerr << "Usage: noise_preproc_plan <config_path>" << std::endl;
+        std::cerr << "Usage: preprocessing_plan <config_path>" << std::endl;
         return 1;
     }
 

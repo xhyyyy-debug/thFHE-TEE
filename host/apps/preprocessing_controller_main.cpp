@@ -1,5 +1,10 @@
+// Controller entry point for the offline preprocessing phase. It plans required
+// materials, orchestrates party rounds, and streams signed artifacts to disk.
+
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -14,12 +19,13 @@
 #include "../../enclave/common/noise_types.h"
 #include "../config/config.hpp"
 #include "../dkg/planner.hpp"
-#include "../dkg/preprocessing_store.hpp"
+#include "../dkg/preprocessing_artifacts.hpp"
 #include "../protocol/grpc_utils.hpp"
 
 namespace
 {
 constexpr int kGrpcMessageLimitBytes = 512 * 1024 * 1024;
+constexpr uint64_t kDefaultPreprocRoundSize = 100000;
 
 enum class Mode
 {
@@ -137,22 +143,30 @@ std::chrono::seconds preprocessing_timeout(Mode mode, uint64_t batch_size)
     return std::chrono::minutes(10);
 }
 
+struct ProgressTracker
+{
+    bool initialized = false;
+    uint64_t next_progress_mark = 5;
+    std::chrono::steady_clock::time_point start_time{};
+    std::chrono::steady_clock::time_point last_heartbeat{};
+};
+
 void start_round(
     Mode mode,
     uint64_t round_id,
     uint64_t batch_size,
     uint32_t noise_bound_bits,
-    std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>>& stubs,
+    std::vector<std::unique_ptr<dkg_rpc::PartyNodeRpc::Stub>>& stubs,
     const std::vector<host::Endpoint>& peers)
 {
     for (size_t i = 0; i < stubs.size(); ++i)
     {
         grpc::ClientContext context;
-        noise_rpc::StartRequest request;
+        dkg_rpc::StartRequest request;
         request.set_round_id(round_id);
         request.set_batch_size(batch_size);
         request.set_noise_bound_bits(noise_bound_bits);
-        noise_rpc::StartReply reply;
+        dkg_rpc::StartReply reply;
         grpc::Status status;
         switch (mode)
         {
@@ -179,23 +193,36 @@ void start_round(
 
 std::vector<host::StatusSnapshot> wait_and_fetch(
     Mode mode,
+    uint64_t expected_round_id,
     const std::string& label,
     uint64_t batch_size,
-    std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>>& stubs,
+    uint64_t completed_base,
+    uint64_t total_size,
+    ProgressTracker* tracker,
+    std::vector<std::unique_ptr<dkg_rpc::PartyNodeRpc::Stub>>& stubs,
     const std::vector<host::Endpoint>& peers)
 {
+    if (tracker == nullptr)
+    {
+        throw std::runtime_error("Progress tracker must not be null");
+    }
+
     const auto timeout = preprocessing_timeout(mode, batch_size);
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    const auto start = std::chrono::steady_clock::now();
+    const auto round_start = std::chrono::steady_clock::now();
     std::vector<host::StatusSnapshot> snapshots(stubs.size());
-    uint64_t next_progress_mark = 5;
-    auto last_heartbeat = start;
 
-    std::cout << format_progress_line(label, 0, batch_size, std::chrono::steady_clock::duration::zero())
-              << std::endl;
-    std::cout << "[preproc] " << label
-              << " timeout=" << format_duration(std::chrono::duration_cast<std::chrono::seconds>(timeout))
-              << std::endl;
+    if (!tracker->initialized)
+    {
+        tracker->initialized = true;
+        tracker->start_time = round_start;
+        tracker->last_heartbeat = round_start;
+        std::cout << format_progress_line(label, 0, total_size, std::chrono::steady_clock::duration::zero())
+                  << std::endl;
+        std::cout << "[preproc] " << label
+                  << " timeout=" << format_duration(std::chrono::duration_cast<std::chrono::seconds>(timeout))
+                  << std::endl;
+    }
 
     while (std::chrono::steady_clock::now() < deadline)
     {
@@ -204,9 +231,9 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
         for (size_t i = 0; i < stubs.size(); ++i)
         {
             grpc::ClientContext context;
-            noise_rpc::StatusRequest request;
+            dkg_rpc::StatusRequest request;
             request.set_full(false);
-            noise_rpc::StatusReply reply;
+            dkg_rpc::StatusReply reply;
             const auto status = stubs[i]->Status(&context, request, &reply);
             if (!status.ok())
             {
@@ -218,35 +245,45 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
                 throw std::runtime_error("Preprocessing round failed on party " + std::to_string(snapshots[i].party_id));
             }
             all_done = all_done &&
+                snapshots[i].round_id == expected_round_id &&
                 snapshots[i].state == done_state(mode) &&
                 snapshots[i].completed_items == batch_size;
-            min_completed = std::min(min_completed, snapshots[i].completed_items);
+            if (snapshots[i].round_id != expected_round_id)
+            {
+                min_completed = std::min<uint64_t>(min_completed, 0);
+            }
+            else
+            {
+                min_completed = std::min(min_completed, snapshots[i].completed_items);
+            }
         }
 
-        const uint64_t progress = batch_size == 0 ? 100 : (min_completed * 100) / batch_size;
-        while (next_progress_mark <= 100 && progress >= next_progress_mark)
+        const uint64_t effective_completed = completed_base + min_completed;
+        const uint64_t progress = total_size == 0 ? 100 : (effective_completed * 100) / total_size;
+        while (tracker->next_progress_mark <= 100 && progress >= tracker->next_progress_mark)
         {
-            const uint64_t display_completed = (next_progress_mark == 100) ? batch_size : min_completed;
+            const uint64_t display_completed =
+                (tracker->next_progress_mark == 100) ? total_size : effective_completed;
             std::cout << format_progress_line(
                 label,
                 display_completed,
-                batch_size,
-                std::chrono::steady_clock::now() - start)
+                total_size,
+                std::chrono::steady_clock::now() - tracker->start_time)
                       << std::endl;
-            next_progress_mark += 5;
-            last_heartbeat = std::chrono::steady_clock::now();
+            tracker->next_progress_mark += 5;
+            tracker->last_heartbeat = std::chrono::steady_clock::now();
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (!all_done && now - last_heartbeat >= std::chrono::seconds(30))
+        if (!all_done && now - tracker->last_heartbeat >= std::chrono::seconds(30))
         {
             std::cout << format_progress_line(
                 label,
-                min_completed,
-                batch_size,
-                now - start)
+                effective_completed,
+                total_size,
+                now - tracker->start_time)
                       << std::endl;
-            last_heartbeat = now;
+            tracker->last_heartbeat = now;
         }
 
         if (all_done)
@@ -259,28 +296,42 @@ std::vector<host::StatusSnapshot> wait_and_fetch(
     for (size_t i = 0; i < stubs.size(); ++i)
     {
         grpc::ClientContext context;
-        noise_rpc::StatusRequest request;
+        dkg_rpc::StatusRequest request;
         request.set_full(true);
-        noise_rpc::StatusReply reply;
+        dkg_rpc::StatusReply reply;
         const auto status = stubs[i]->Status(&context, request, &reply);
         if (!status.ok())
         {
             throw std::runtime_error("Status(full) RPC failed for " + peers[i].host + ": " + status.error_message());
         }
         snapshots[i] = host::parse_status_proto(reply);
-        if (snapshots[i].state != done_state(mode) || snapshots[i].completed_items != batch_size)
+        if (snapshots[i].round_id != expected_round_id ||
+            snapshots[i].state != done_state(mode) ||
+            snapshots[i].completed_items != batch_size)
         {
             throw std::runtime_error("Preprocessing round did not finish on party " + std::to_string(snapshots[i].party_id));
         }
+    }
+
+    if (completed_base + batch_size >= total_size && tracker->next_progress_mark <= 100)
+    {
+        std::cout << format_progress_line(
+            label,
+            total_size,
+            total_size,
+            std::chrono::steady_clock::now() - tracker->start_time)
+                  << std::endl;
+        tracker->next_progress_mark = 105;
     }
 
     return snapshots;
 }
 
 void append_bits(
-    std::vector<host::dkg::PreprocessedKeygenMaterial>* materials,
+    std::vector<host::dkg::PreprocessingStreamWriter>* writers,
     const std::vector<host::StatusSnapshot>& snapshots,
-    uint64_t batch_size)
+    uint64_t batch_size,
+    std::string* error_message)
 {
     for (uint64_t item = 0; item < batch_size; ++item)
     {
@@ -293,15 +344,19 @@ void append_bits(
                 snapshot.party_id,
                 noise::ring_from_raw(snapshot.bits[item].b)
             });
-            (*materials)[snapshot.party_id - 1].raw_bits.push_back(bit);
+            if (!(*writers)[snapshot.party_id - 1].write_raw_bit(bit, error_message))
+            {
+                throw std::runtime_error(error_message != nullptr ? *error_message : "Failed to write preprocessing bit");
+            }
         }
     }
 }
 
 void append_triples(
-    std::vector<host::dkg::PreprocessedKeygenMaterial>* materials,
+    std::vector<host::dkg::PreprocessingStreamWriter>* writers,
     const std::vector<host::StatusSnapshot>& snapshots,
-    uint64_t batch_size)
+    uint64_t batch_size,
+    std::string* error_message)
 {
     for (uint64_t item = 0; item < batch_size; ++item)
     {
@@ -315,17 +370,21 @@ void append_triples(
                 algebra::RingShare{snapshot.party_id, noise::ring_from_raw(snapshot.triples[item].b)},
                 algebra::RingShare{snapshot.party_id, noise::ring_from_raw(snapshot.triples[item].c)}
             });
-            (*materials)[snapshot.party_id - 1].triples.push_back(triple);
+            if (!(*writers)[snapshot.party_id - 1].write_triple(triple, error_message))
+            {
+                throw std::runtime_error(error_message != nullptr ? *error_message : "Failed to write preprocessing triple");
+            }
         }
     }
 }
 
 void append_noises(
-    std::vector<host::dkg::PreprocessedKeygenMaterial>* materials,
+    std::vector<host::dkg::PreprocessingStreamWriter>* writers,
     const std::vector<host::StatusSnapshot>& snapshots,
     uint64_t batch_size,
     host::dkg::NoiseKind kind,
-    uint32_t bound_bits)
+    uint32_t bound_bits,
+    std::string* error_message)
 {
     for (uint64_t item = 0; item < batch_size; ++item)
     {
@@ -340,7 +399,10 @@ void append_noises(
                 snapshot.party_id,
                 noise::ring_from_raw(snapshot.aggregates[item].y)
             });
-            (*materials)[snapshot.party_id - 1].noises.push_back(noise_batch);
+            if (!(*writers)[snapshot.party_id - 1].write_noise(noise_batch, error_message))
+            {
+                throw std::runtime_error(error_message != nullptr ? *error_message : "Failed to write preprocessing noise");
+            }
         }
     }
 }
@@ -350,7 +412,7 @@ int main(int argc, const char* argv[])
 {
     if (argc != 4)
     {
-        std::cerr << "Usage: noise_preproc <session_id> <config_path> <output_dir>" << std::endl;
+        std::cerr << "Usage: preprocessing_controller <session_id> <config_path> <output_dir>" << std::endl;
         return 1;
     }
 
@@ -362,7 +424,7 @@ int main(int argc, const char* argv[])
         const host::dkg::DkgPlan plan = host::dkg::build_plan(config);
 
         const auto peers = host::endpoints_from_config(config);
-        std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
+        std::vector<std::unique_ptr<dkg_rpc::PartyNodeRpc::Stub>> stubs;
         stubs.reserve(peers.size());
         grpc::ChannelArguments channel_args;
         channel_args.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
@@ -374,26 +436,78 @@ int main(int argc, const char* argv[])
                 host::endpoint_to_target(peer),
                 grpc::InsecureChannelCredentials(),
                 channel_args);
-            stubs.push_back(noise_rpc::NoiseParty::NewStub(channel));
+            stubs.push_back(dkg_rpc::PartyNodeRpc::NewStub(channel));
         }
 
-        std::vector<host::dkg::PreprocessedKeygenMaterial> materials(peers.size());
-        for (auto& material : materials)
+        size_t total_noise_count = 0;
+        for (const auto& info : plan.preprocessing.noise_batches)
         {
-            material.seed = derive_seed(session_id);
+            total_noise_count += info.amount;
+        }
+
+        const host::dkg::PublicSeed preproc_seed = derive_seed(session_id);
+        const std::string session_root = host::dkg::PreprocessingArtifactStore::session_dir(output_dir, std::to_string(session_id));
+        std::filesystem::create_directories(session_root);
+
+        std::vector<host::dkg::PreprocessingStreamWriter> writers(peers.size());
+        std::string error_message;
+        for (size_t i = 0; i < writers.size(); ++i)
+        {
+            const std::filesystem::path party_dir = std::filesystem::path(session_root) / ("party_" + std::to_string(i + 1));
+            std::filesystem::create_directories(party_dir);
+            {
+                std::ofstream meta(party_dir / "meta.txt");
+                if (!meta)
+                {
+                    throw std::runtime_error("Failed to write preprocessing meta");
+                }
+                meta << "preset=" << plan.params.preset_name << "\n";
+                meta << "keyset_mode=" << host::dkg::to_string(plan.params.keyset_mode) << "\n";
+                meta << "seed_low=" << preproc_seed.low << "\n";
+                meta << "seed_high=" << preproc_seed.high << "\n";
+                meta << "raw_secret_bits=" << plan.preprocessing.raw_secret_bits << "\n";
+                meta << "total_triples=" << plan.preprocessing.total_triples << "\n";
+            }
+            if (!writers[i].open(
+                    (party_dir / "preprocessing.bin").string(),
+                    plan,
+                    preproc_seed,
+                    plan.preprocessing.raw_secret_bits,
+                    total_noise_count,
+                    plan.preprocessing.total_triples,
+                    &error_message))
+            {
+                throw std::runtime_error(error_message);
+            }
         }
         uint64_t round_id = session_id * 1000ULL + 1ULL;
         const auto overall_start = std::chrono::steady_clock::now();
+        const uint64_t round_size = kDefaultPreprocRoundSize;
 
         if (plan.preprocessing.raw_secret_bits != 0)
         {
             std::cout << "[preproc] starting bit total=" << plan.preprocessing.raw_secret_bits << std::endl;
-            start_round(Mode::kBit, round_id, plan.preprocessing.raw_secret_bits, 0, stubs, peers);
-            append_bits(
-                &materials,
-                wait_and_fetch(Mode::kBit, "bit", plan.preprocessing.raw_secret_bits, stubs, peers),
-                plan.preprocessing.raw_secret_bits);
-            round_id += 1;
+            ProgressTracker progress;
+            for (uint64_t completed = 0; completed < plan.preprocessing.raw_secret_bits; completed += round_size)
+            {
+                const uint64_t current_size = std::min<uint64_t>(round_size, plan.preprocessing.raw_secret_bits - completed);
+                start_round(Mode::kBit, round_id, current_size, 0, stubs, peers);
+                append_bits(
+                    &writers,
+                    wait_and_fetch(
+                        Mode::kBit,
+                        round_id,
+                        "bit",
+                        current_size,
+                        completed,
+                        plan.preprocessing.raw_secret_bits,
+                        &progress,
+                        stubs,
+                        peers),
+                    current_size,
+                    &error_message);
+                round_id += 1;
+            }
         }
 
         for (const host::dkg::NoiseInfo& info : plan.preprocessing.noise_batches)
@@ -407,32 +521,60 @@ int main(int argc, const char* argv[])
                   << ",bound=" << info.bound_bits << ")";
             std::cout << "[preproc] starting " << label.str()
                       << " total=" << info.amount << std::endl;
-            start_round(Mode::kNoise, round_id, info.amount, info.bound_bits, stubs, peers);
-            append_noises(
-                &materials,
-                wait_and_fetch(Mode::kNoise, label.str(), info.amount, stubs, peers),
-                info.amount,
-                info.kind,
-                info.bound_bits);
-            round_id += 1;
+            ProgressTracker progress;
+            for (uint64_t completed = 0; completed < info.amount; completed += round_size)
+            {
+                const uint64_t current_size = std::min<uint64_t>(round_size, info.amount - completed);
+                start_round(Mode::kNoise, round_id, current_size, info.bound_bits, stubs, peers);
+                append_noises(
+                    &writers,
+                    wait_and_fetch(
+                        Mode::kNoise,
+                        round_id,
+                        label.str(),
+                        current_size,
+                        completed,
+                        info.amount,
+                        &progress,
+                        stubs,
+                        peers),
+                    current_size,
+                    info.kind,
+                    info.bound_bits,
+                    &error_message);
+                round_id += 1;
+            }
         }
 
         if (plan.preprocessing.total_triples != 0)
         {
             std::cout << "[preproc] starting triple total=" << plan.preprocessing.total_triples << std::endl;
-            start_round(Mode::kTriple, round_id, plan.preprocessing.total_triples, 0, stubs, peers);
-            append_triples(
-                &materials,
-                wait_and_fetch(Mode::kTriple, "triple", plan.preprocessing.total_triples, stubs, peers),
-                plan.preprocessing.total_triples);
+            ProgressTracker progress;
+            for (uint64_t completed = 0; completed < plan.preprocessing.total_triples; completed += round_size)
+            {
+                const uint64_t current_size = std::min<uint64_t>(round_size, plan.preprocessing.total_triples - completed);
+                start_round(Mode::kTriple, round_id, current_size, 0, stubs, peers);
+                append_triples(
+                    &writers,
+                    wait_and_fetch(
+                        Mode::kTriple,
+                        round_id,
+                        "triple",
+                        current_size,
+                        completed,
+                        plan.preprocessing.total_triples,
+                        &progress,
+                        stubs,
+                        peers),
+                    current_size,
+                    &error_message);
+                round_id += 1;
+            }
         }
 
-        std::string error_message;
-        const std::string session_root = host::dkg::PreprocessingStore::session_dir(output_dir, std::to_string(session_id));
-        for (size_t i = 0; i < materials.size(); ++i)
+        for (auto& writer : writers)
         {
-            const std::string party_session = "party_" + std::to_string(i + 1);
-            if (!host::dkg::PreprocessingStore::save(session_root, party_session, plan, materials[i], &error_message))
+            if (!writer.close(&error_message))
             {
                 throw std::runtime_error(error_message);
             }
@@ -454,3 +596,4 @@ int main(int argc, const char* argv[])
         return 1;
     }
 }
+

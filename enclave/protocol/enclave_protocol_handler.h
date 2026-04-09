@@ -1,5 +1,5 @@
-#ifndef NOISE_PROTOCOL_PROG_MPC_H
-#define NOISE_PROTOCOL_PROG_MPC_H
+#ifndef NOISE_PROTOCOL_ENCLAVE_PROTOCOL_HANDLER_H
+#define NOISE_PROTOCOL_ENCLAVE_PROTOCOL_HANDLER_H
 
 #include <array>
 #include <cstddef>
@@ -16,10 +16,12 @@
 
 namespace noise
 {
-class ProgMPCHandler
+// EnclaveProtocolHandler is the enclave-side protocol entry point. It owns the local
+// PRSS/PRZS state, online preprocessing state machines, and TEE authentication keys.
+class EnclaveProtocolHandler
 {
 public:
-    ProgMPCHandler()
+    EnclaveProtocolHandler()
     {
         reset_state();
     }
@@ -45,6 +47,8 @@ public:
         initialize_auth_keys();
         storage_auth_key_ = generate_storage_auth_key();
 
+        // PRSS must use a session identifier shared across all parties. Do not
+        // include party_id here, otherwise each enclave derives incompatible shares.
         const prss::SessionId128 sid{
             mix64((party_count << 16U) ^ threshold ^ 0x50525353ULL),
             mix64((party_count << 4U) ^ (threshold << 48U) ^ 0x50525a53ULL)

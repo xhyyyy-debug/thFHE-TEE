@@ -12,6 +12,7 @@ namespace host
 {
 namespace dkg
 {
+// High-level keyset variants exposed by the host orchestration layer.
 enum class KeysetMode
 {
     kStandard,
@@ -42,6 +43,8 @@ enum class NoiseKind
     kSnsCompressionKsk,
 };
 
+// A preprocessing bucket describes one family of TUniform noise shares that can
+// later be consumed by keygen. The same NoiseKind may appear with multiple bounds.
 struct NoiseInfo
 {
     NoiseKind kind = NoiseKind::kLwe;
@@ -66,6 +69,7 @@ struct CompressionParams
     uint32_t noise_bound_bits = 0;
 };
 
+// Parameters for the regular TFHE key material (LWE / GLWE / BK / KSK / PKSK).
 struct RegularParams
 {
     uint64_t sec = 128;
@@ -92,6 +96,7 @@ struct RegularParams
     CompressionParams compression;
 };
 
+// Parameters for the noise-squashing extension and its dedicated key material.
 struct SnsParams
 {
     bool enabled = false;
@@ -105,6 +110,7 @@ struct SnsParams
     CompressionParams compression;
 };
 
+// Full DKG parameter set derived from config or from a named preset.
 struct DkgParams
 {
     std::string preset_name;
@@ -113,6 +119,7 @@ struct DkgParams
     SnsParams sns;
 };
 
+// Offline preprocessing budget needed by the current host/TEE implementation.
 struct PreprocessingRequirements
 {
     size_t total_bits = 0;

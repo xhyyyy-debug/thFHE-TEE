@@ -46,13 +46,28 @@ struct SharedGgswCiphertext
     std::vector<SharedGlevCiphertext> rows;
 };
 
+struct SharedPackingKeyswitchBlock
+{
+    std::vector<SharedGlevCiphertext> polynomial_entries;
+};
+
+struct SharedLwePackingKeyswitchKey
+{
+    size_t input_lwe_dimension = 0;
+    size_t output_glwe_dimension = 0;
+    size_t output_polynomial_size = 0;
+    size_t base_log = 0;
+    size_t level_count = 0;
+    std::vector<SharedPackingKeyswitchBlock> blocks;
+};
+
 class DistributedEncryption
 {
 public:
     static bool enc_lwe(
         const PublicSeed& seed,
         uint64_t seed_offset,
-        const noise::RingElementRaw& message,
+        const noise::RingElementRaw& encoded_message,
         const std::vector<algebra::RingShare>& lwe_secret,
         const algebra::RingShare& noise_share,
         size_t lwe_dimension,
@@ -62,7 +77,7 @@ public:
     static bool enc_glwe(
         const PublicSeed& seed,
         uint64_t seed_offset,
-        const noise::RingElementRaw& message,
+        const noise::RingElementRaw& encoded_message,
         const std::vector<algebra::RingShare>& glwe_secret,
         const algebra::RingShare& noise_share,
         size_t glwe_dimension,
@@ -72,7 +87,7 @@ public:
     static bool enc_lev(
         const PublicSeed& seed,
         uint64_t seed_offset,
-        const noise::RingElementRaw& message,
+        const noise::RingElementRaw& encoded_message,
         const std::vector<algebra::RingShare>& lwe_secret,
         const std::vector<algebra::RingShare>& noise_shares,
         size_t lwe_dimension,
@@ -84,7 +99,7 @@ public:
     static bool enc_glev(
         const PublicSeed& seed,
         uint64_t seed_offset,
-        const noise::RingElementRaw& message,
+        const noise::RingElementRaw& encoded_message,
         const std::vector<algebra::RingShare>& glwe_secret,
         const std::vector<algebra::RingShare>& noise_shares,
         size_t glwe_dimension,
@@ -96,7 +111,7 @@ public:
     static bool enc_ggsw(
         const PublicSeed& seed,
         uint64_t seed_offset,
-        const noise::RingElementRaw& message,
+        const noise::RingElementRaw& encoded_message,
         const std::vector<algebra::RingShare>& secret_bits,
         const std::vector<algebra::RingShare>& glwe_secret,
         const std::vector<algebra::RingShare>& multiplied_secret_messages,
@@ -106,6 +121,35 @@ public:
         size_t level_count,
         bool include_mask,
         SharedGgswCiphertext* out);
+
+    static bool enc_lwe_packing_keyswitch_block(
+        const PublicSeed& seed,
+        uint64_t seed_offset,
+        size_t input_index,
+        const std::vector<algebra::RingShare>& input_lwe_secret,
+        const std::vector<algebra::RingShare>& output_glwe_secret,
+        const std::vector<algebra::RingShare>& noise_shares,
+        size_t input_lwe_dimension,
+        size_t output_glwe_dimension,
+        size_t output_polynomial_size,
+        size_t base_log,
+        size_t level_count,
+        bool include_mask,
+        SharedPackingKeyswitchBlock* out);
+
+    static bool enc_lwe_packing_keyswitch_key(
+        const PublicSeed& seed,
+        uint64_t seed_offset,
+        const std::vector<algebra::RingShare>& input_lwe_secret,
+        const std::vector<algebra::RingShare>& output_glwe_secret,
+        const std::vector<algebra::RingShare>& noise_shares,
+        size_t input_lwe_dimension,
+        size_t output_glwe_dimension,
+        size_t output_polynomial_size,
+        size_t base_log,
+        size_t level_count,
+        bool include_mask,
+        SharedLwePackingKeyswitchKey* out);
 };
 } // namespace dkg
 } // namespace host

@@ -9,6 +9,7 @@
 
 namespace host
 {
+// Runtime address information for one party container / host process.
 struct PartyConfig
 {
     std::string name;
@@ -16,6 +17,8 @@ struct PartyConfig
     Endpoint endpoint;
 };
 
+// User-facing runtime configuration loaded from the text config file. This is
+// intentionally closer to configuration syntax than to the internal DKG schema.
 struct RuntimeConfig
 {
     struct DkgCompressionConfig

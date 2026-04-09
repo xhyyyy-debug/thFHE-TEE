@@ -1,3 +1,6 @@
+// Main host-side party service. This executable owns one enclave instance,
+// participates in preprocessing rounds, and executes the online DKG protocol.
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -21,11 +24,11 @@
 #include "../config/config.hpp"
 #include "../dkg/encryption.hpp"
 #include "../dkg/planner.hpp"
-#include "../dkg/preprocessing_store.hpp"
-#include "../dkg/serialization.hpp"
+#include "../dkg/preprocessing_artifacts.hpp"
+#include "../dkg/artifact_serialization.hpp"
 #include "../protocol/control_protocol.hpp"
 #include "../protocol/grpc_utils.hpp"
-#include "noise_u.h"
+#include "dkg_u.h"
 
 namespace
 {
@@ -117,14 +120,14 @@ public:
         }
 
         check_oe(
-            oe_create_noise_enclave(
+            oe_create_dkg_enclave(
                 enclave_path_.c_str(),
                 OE_ENCLAVE_TYPE_SGX,
                 flags,
                 nullptr,
                 0,
                 &enclave_),
-            "oe_create_noise_enclave failed");
+            "oe_create_dkg_enclave failed");
 
         int status = noise::kOk;
         check_oe(
@@ -170,7 +173,7 @@ public:
         handle_batch_bit_v_packages(packages);
     }
 
-    void HandleBatchKeygenOpenPackages(const std::vector<noise_rpc::KeygenOpenSharePackage>& packages)
+    void HandleBatchKeygenOpenPackages(const std::vector<dkg_rpc::KeygenOpenSharePackage>& packages)
     {
         handle_batch_keygen_open_packages(packages);
     }
@@ -265,7 +268,7 @@ private:
     uint32_t noise_bound_bits_;
     uint16_t listen_port_;
     std::vector<host::Endpoint> peers_;
-    std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs_;
+    std::vector<std::unique_ptr<dkg_rpc::PartyNodeRpc::Stub>> stubs_;
     oe_enclave_t* enclave_ = nullptr;
 
     std::mutex mutex_;
@@ -281,6 +284,50 @@ private:
     std::array<std::array<bool, noise::kMaxParties>, noise::kMaxParallelBatch> triple_received_from_{};
     std::array<std::array<bool, noise::kMaxParties>, noise::kMaxParallelBatch> bit_received_from_{};
     std::map<uint64_t, std::vector<algebra::RingShare>> keygen_open_shares_;
+
+    uint64_t keygen_work_total(const host::dkg::DkgPlan& plan) const
+    {
+        uint64_t total = plan.preprocessing.raw_secret_bits;
+        total += plan.shape.public_key_ciphertexts;
+        if (plan.params.regular.pksk_destination != host::dkg::PkskDestination::kNone)
+        {
+            total += plan.shape.lwe_hat_secret_bits * plan.params.regular.pksk_level;
+        }
+        total += plan.shape.glwe_secret_bits * plan.params.regular.ks_level;
+        total += plan.shape.lwe_secret_bits * plan.shape.glwe_secret_bits;
+        if (plan.params.sns.enabled)
+        {
+            total += plan.shape.lwe_secret_bits * plan.shape.sns_glwe_secret_bits;
+        }
+        if (plan.params.regular.compression.enabled)
+        {
+            total += plan.shape.glwe_secret_bits * plan.shape.compression_secret_bits;
+            total += plan.shape.compression_secret_bits * plan.params.regular.compression.br_level;
+        }
+        if (plan.params.sns.enabled && plan.params.sns.compression.enabled)
+        {
+            total += plan.shape.sns_glwe_secret_bits *
+                plan.params.sns.compression.packing_ks_polynomial_size *
+                plan.params.sns.compression.packing_ks_level;
+        }
+        return std::max<uint64_t>(total, 1);
+    }
+
+    void update_keygen_progress(
+        uint64_t round_id,
+        const std::string& stage,
+        uint64_t completed,
+        uint64_t total)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (keygen_.round_id != round_id || keygen_.state.rfind("KEYGEN_FAILED", 0) == 0)
+        {
+            return;
+        }
+        keygen_.batch_size = std::max<uint64_t>(total, 1);
+        keygen_.completed_items = std::min(completed, keygen_.batch_size);
+        keygen_.state = "KEYGEN_RUNNING:" + stage;
+    }
 
     void stop()
     {
@@ -299,7 +346,7 @@ private:
         {
             const std::string target = host::endpoint_to_target(peer);
             auto channel = grpc::CreateChannel(target, grpc::InsecureChannelCredentials());
-            stubs_.push_back(noise_rpc::NoiseParty::NewStub(channel));
+            stubs_.push_back(dkg_rpc::PartyNodeRpc::NewStub(channel));
         }
     }
 
@@ -420,7 +467,6 @@ private:
             wait_for_peers_ready(round_id, chunk_start);
             const uint64_t chunk_size = std::min<uint64_t>(noise::kMaxParallelBatch, batch_size - chunk_start);
             GeneratedChunk chunk = generate_chunk(round_id, chunk_start, chunk_size);
-            wait_for_peers_generated(round_id, chunk_start, chunk_size);
             send_chunk(chunk_start, chunk);
             wait_for_chunk(round_id, chunk_start);
             finalize_chunk(round_id, chunk_start);
@@ -651,7 +697,7 @@ private:
             }
 
             log("chunk " + std::to_string(chunk_start) + ": sending batch shares to party " + std::to_string(receiver));
-            noise_rpc::BatchShareRequest request;
+            dkg_rpc::BatchShareRequest request;
             for (const auto& share : packages)
             {
                 auto* entry = request.add_packages();
@@ -659,7 +705,7 @@ private:
             }
 
             grpc::ClientContext context;
-            noise_rpc::BatchAckReply reply;
+            dkg_rpc::BatchAckReply reply;
             const auto status = stubs_[receiver - 1]->BatchShare(&context, request, &reply);
             if (!status.ok())
             {
@@ -685,7 +731,7 @@ private:
                 continue;
             }
 
-            noise_rpc::BatchTripleDRequest request;
+            dkg_rpc::BatchTripleDRequest request;
             for (const auto& pkg : chunk.packages)
             {
                 auto* entry = request.add_packages();
@@ -693,7 +739,7 @@ private:
             }
 
             grpc::ClientContext context;
-            noise_rpc::BatchTripleAckReply reply;
+            dkg_rpc::BatchTripleAckReply reply;
             const auto status = stubs_[receiver - 1]->BatchTripleD(&context, request, &reply);
             if (!status.ok())
             {
@@ -715,7 +761,7 @@ private:
                 continue;
             }
 
-            noise_rpc::BatchBitVRequest request;
+            dkg_rpc::BatchBitVRequest request;
             for (const auto& pkg : chunk.packages)
             {
                 auto* entry = request.add_packages();
@@ -723,7 +769,7 @@ private:
             }
 
             grpc::ClientContext context;
-            noise_rpc::BatchBitAckReply reply;
+            dkg_rpc::BatchBitAckReply reply;
             const auto status = stubs_[receiver - 1]->BatchBitV(&context, request, &reply);
             if (!status.ok())
             {
@@ -1198,7 +1244,7 @@ private:
                     std::lock_guard<std::mutex> lock(mutex_);
                     if (keygen_.round_id == round_id)
                     {
-                        keygen_.completed_items = 1;
+                        keygen_.completed_items = keygen_.batch_size;
                         keygen_.state = "KEYGEN_DONE";
                     }
                 }
@@ -1219,7 +1265,7 @@ private:
         }).detach();
     }
 
-    void handle_batch_keygen_open_packages(const std::vector<noise_rpc::KeygenOpenSharePackage>& packages)
+    void handle_batch_keygen_open_packages(const std::vector<dkg_rpc::KeygenOpenSharePackage>& packages)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& package : packages)
@@ -1242,6 +1288,9 @@ private:
 
     algebra::ResiduePolyF4Z128 open_share_online(uint64_t round_id, const algebra::RingShare& local_share)
     {
+        // Online Open is implemented as an explicit all-to-all exchange between
+        // host processes. We retain only the shares for the current open round
+        // and erase them immediately after reconstruction to avoid unbounded growth.
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto& shares = keygen_open_shares_[round_id];
@@ -1255,7 +1304,7 @@ private:
             }
         }
 
-        noise_rpc::BatchKeygenOpenRequest request;
+        dkg_rpc::BatchKeygenOpenRequest request;
         host::fill_keygen_open_share_proto(
             round_id,
             party_id_,
@@ -1269,7 +1318,7 @@ private:
                 continue;
             }
             grpc::ClientContext context;
-            noise_rpc::BatchKeygenOpenReply reply;
+            dkg_rpc::BatchKeygenOpenReply reply;
             const grpc::Status status = stubs_[i]->BatchKeygenOpen(&context, request, &reply);
             if (!status.ok() || !reply.ok())
             {
@@ -1277,15 +1326,15 @@ private:
             }
         }
 
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(10);
         std::unique_lock<std::mutex> lock(mutex_);
         round_cv_.wait_until(lock, deadline, [&]() {
             const auto it = keygen_open_shares_.find(round_id);
-            return it != keygen_open_shares_.end() && it->second.size() >= (2 * threshold_ + 1);
+            return it != keygen_open_shares_.end() && it->second.size() >= party_count_;
         });
 
         const auto it = keygen_open_shares_.find(round_id);
-        if (it == keygen_open_shares_.end() || it->second.size() < (2 * threshold_ + 1))
+        if (it == keygen_open_shares_.end() || it->second.size() < party_count_)
         {
             throw std::runtime_error("Timed out waiting for online open shares");
         }
@@ -1295,6 +1344,7 @@ private:
         {
             throw std::runtime_error("Failed to reconstruct online open value");
         }
+        keygen_open_shares_.erase(it);
         return opened;
     }
 
@@ -1304,6 +1354,8 @@ private:
         const algebra::RingShare& rhs,
         const algebra::RingTripleShare& triple)
     {
+        // Beaver multiplication over locally held shares:
+        // epsilon = open(x + a), rho = open(y + b), then z = y*epsilon - a*rho + c.
         if (open_counter == nullptr)
         {
             throw std::runtime_error("null open counter");
@@ -1328,28 +1380,69 @@ private:
 
     void run_keygen(uint64_t round_id, const std::string& session_id, const std::string& preproc_root, const std::string& output_dir)
     {
-        host::dkg::DkgPlan loaded_plan;
-        host::dkg::PreprocessedKeygenMaterial material;
+        // Keygen consumes preprocessing in streaming mode. This mirrors the KMS
+        // handle-based API and keeps both host memory and key material buffering bounded.
+        host::dkg::PreprocessingStreamReader preproc_reader;
         std::string error_message;
-        const std::string session_root = host::dkg::PreprocessingStore::session_dir(preproc_root, session_id);
+        const std::string session_root = host::dkg::PreprocessingArtifactStore::session_dir(preproc_root, session_id);
         const std::string party_session = "party_" + std::to_string(party_id_);
-        if (!host::dkg::PreprocessingStore::load(session_root, party_session, &loaded_plan, &material, &error_message))
+        if (!host::dkg::PreprocessingArtifactStore::open_reader(session_root, party_session, &preproc_reader, &error_message))
         {
             throw std::runtime_error(error_message);
         }
-        (void)loaded_plan;
 
         const host::dkg::DkgPlan plan = host::dkg::build_plan(config_);
-        if (!host::dkg::DistributedKeyGen::validate_preprocessing(plan, material, &error_message))
+        const host::dkg::DkgPlan& preproc_plan = preproc_reader.plan();
+        if (preproc_plan.params.preset_name != plan.params.preset_name ||
+            preproc_plan.params.keyset_mode != plan.params.keyset_mode ||
+            preproc_plan.preprocessing.raw_secret_bits < plan.preprocessing.raw_secret_bits ||
+            preproc_plan.preprocessing.total_triples < plan.preprocessing.total_triples ||
+            preproc_plan.shape.lwe_secret_bits != plan.shape.lwe_secret_bits ||
+            preproc_plan.shape.lwe_hat_secret_bits != plan.shape.lwe_hat_secret_bits ||
+            preproc_plan.shape.glwe_secret_bits != plan.shape.glwe_secret_bits ||
+            preproc_plan.shape.compression_secret_bits != plan.shape.compression_secret_bits ||
+            preproc_plan.shape.sns_glwe_secret_bits != plan.shape.sns_glwe_secret_bits ||
+            preproc_plan.shape.sns_compression_secret_bits != plan.shape.sns_compression_secret_bits)
         {
-            throw std::runtime_error(error_message);
+            throw std::runtime_error("Preprocessing plan does not match keygen config");
         }
+        if (preproc_reader.raw_bit_count() < plan.preprocessing.raw_secret_bits)
+        {
+            throw std::runtime_error("Insufficient preprocessing raw bits");
+        }
+        if (preproc_reader.triple_count() < plan.preprocessing.total_triples)
+        {
+            throw std::runtime_error("Insufficient preprocessing triples");
+        }
+        std::map<std::pair<host::dkg::NoiseKind, uint32_t>, size_t> expected_noise_counts;
+        for (const auto& noise_info : plan.preprocessing.noise_batches)
+        {
+            if (noise_info.amount == 0)
+            {
+                continue;
+            }
+            expected_noise_counts[{noise_info.kind, noise_info.bound_bits}] += noise_info.amount;
+        }
+        for (const auto& entry : expected_noise_counts)
+        {
+            const size_t actual = preproc_reader.noise_count(entry.first.first, entry.first.second);
+            if (actual < entry.second)
+            {
+                throw std::runtime_error("Insufficient preprocessing noise");
+            }
+        }
+
+        const uint64_t work_total = keygen_work_total(plan);
+        uint64_t work_completed = 0;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
 
         host::dkg::KeygenOutput key_output;
         key_output.plan = plan;
-        key_output.public_seed = material.seed;
+        key_output.public_seed = preproc_reader.seed();
 
         auto verify_noise_record = [&](const host::dkg::SharedNoiseVector& item) {
+            // Preprocessing artifacts are stored on the host but authenticated by
+            // the enclave. Every record must be re-validated before use.
             if (item.shares.size() != 1)
             {
                 throw std::runtime_error("Local noise record must contain exactly one share");
@@ -1400,19 +1493,6 @@ private:
             check_status(status, "ecall_verify_triple_output rejected");
         };
 
-        for (const auto& item : material.raw_bits)
-        {
-            verify_bit_record(item);
-        }
-        for (const auto& item : material.noises)
-        {
-            verify_noise_record(item);
-        }
-        for (const auto& item : material.triples)
-        {
-            verify_triple_record(item);
-        }
-
         auto find_local_share = [&](const std::vector<algebra::RingShare>& shares, const char* label) {
             for (const auto& share : shares)
             {
@@ -1424,44 +1504,33 @@ private:
             throw std::runtime_error(std::string("Missing local share for ") + label);
         };
 
-        struct LocalNoisePool
-        {
-            std::map<host::dkg::NoiseKind, std::deque<algebra::RingShare>> by_kind;
-        } noise_pool;
-
-        for (const auto& item : material.noises)
-        {
-            noise_pool.by_kind[item.kind].push_back(find_local_share(item.shares, "noise"));
-        }
-
-        std::deque<algebra::RingTripleShare> triple_pool;
-        for (const auto& item : material.triples)
-        {
-            bool found = false;
-            for (const auto& triple : item.triples)
+        auto noise_bound_for_kind = [&](host::dkg::NoiseKind kind) -> uint32_t {
+            switch (kind)
             {
-                if (triple.a.owner == party_id_)
-                {
-                    triple_pool.push_back(triple);
-                    found = true;
-                    break;
-                }
+            case host::dkg::NoiseKind::kLwe:
+                return plan.params.regular.lwe_noise_bound_bits;
+            case host::dkg::NoiseKind::kLweHat:
+                return plan.params.regular.lwe_hat_noise_bound_bits;
+            case host::dkg::NoiseKind::kGlwe:
+                return plan.params.regular.glwe_noise_bound_bits;
+            case host::dkg::NoiseKind::kGlweSns:
+                return plan.params.sns.glwe_noise_bound_bits;
+            case host::dkg::NoiseKind::kCompressionKsk:
+                return plan.params.regular.compression.noise_bound_bits;
+            case host::dkg::NoiseKind::kSnsCompressionKsk:
+                return plan.params.sns.compression.noise_bound_bits;
             }
-            if (!found)
-            {
-                throw std::runtime_error("Missing local triple share");
-            }
-        }
+            throw std::runtime_error("Unknown noise kind");
+        };
 
         auto pop_noise = [&](host::dkg::NoiseKind kind, const char* label) {
-            auto it = noise_pool.by_kind.find(kind);
-            if (it == noise_pool.by_kind.end() || it->second.empty())
+            host::dkg::SharedNoiseVector item;
+            if (!preproc_reader.next_noise(kind, noise_bound_for_kind(kind), &item, &error_message))
             {
-                throw std::runtime_error(std::string("Exhausted local noise pool for ") + label);
+                throw std::runtime_error(std::string("Exhausted local noise pool for ") + label + ": " + error_message);
             }
-            algebra::RingShare share = it->second.front();
-            it->second.pop_front();
-            return share;
+            verify_noise_record(item);
+            return find_local_share(item.shares, label);
         };
 
         auto pop_noise_vec = [&](host::dkg::NoiseKind kind, size_t amount, const char* label) {
@@ -1475,41 +1544,60 @@ private:
         };
 
         auto pop_triple = [&]() {
-            if (triple_pool.empty())
+            host::dkg::SharedTripleVector item;
+            if (!preproc_reader.next_triple(&item, &error_message))
             {
-                throw std::runtime_error("Exhausted local triple pool");
+                throw std::runtime_error(std::string("Exhausted local triple pool: ") + error_message);
             }
-            const algebra::RingTripleShare triple = triple_pool.front();
-            triple_pool.pop_front();
-            return triple;
+            verify_triple_record(item);
+            for (const auto& triple : item.triples)
+            {
+                if (triple.a.owner == party_id_)
+                {
+                    return triple;
+                }
+            }
+            throw std::runtime_error("Missing local triple share");
         };
 
-        auto extract_segment = [&](size_t start, size_t count, const char* label) {
+        auto next_raw_bit_share = [&](const char* label) {
+            host::dkg::SharedBitVector item;
+            if (!preproc_reader.next_raw_bit(&item, &error_message))
+            {
+                throw std::runtime_error(std::string("Insufficient raw bits for ") + label + ": " + error_message);
+            }
+            verify_bit_record(item);
+            return find_local_share(item.shares, label);
+        };
+
+        auto extract_segment = [&](size_t count, const char* label) {
             std::vector<algebra::RingShare> out;
             out.reserve(count);
             for (size_t i = 0; i < count; ++i)
             {
-                if (start + i >= material.raw_bits.size())
-                {
-                    throw std::runtime_error(std::string("Insufficient raw bits for ") + label);
-                }
-                out.push_back(find_local_share(material.raw_bits[start + i].shares, label));
+                out.push_back(next_raw_bit_share(label));
             }
             return out;
         };
 
-        size_t raw_offset = 0;
-        const auto lwe = extract_segment(raw_offset, plan.shape.lwe_secret_bits, "lwe");
-        raw_offset += plan.shape.lwe_secret_bits;
-        const auto lwe_hat = extract_segment(raw_offset, plan.shape.lwe_hat_secret_bits, "lwe_hat");
-        raw_offset += plan.shape.lwe_hat_secret_bits;
-        const auto glwe = extract_segment(raw_offset, plan.shape.glwe_secret_bits, "glwe");
-        raw_offset += plan.shape.glwe_secret_bits;
-        const auto compression_glwe = extract_segment(raw_offset, plan.shape.compression_secret_bits, "compression_glwe");
-        raw_offset += plan.shape.compression_secret_bits;
-        const auto sns_glwe = extract_segment(raw_offset, plan.shape.sns_glwe_secret_bits, "sns_glwe");
-        raw_offset += plan.shape.sns_glwe_secret_bits;
-        const auto sns_compression_glwe = extract_segment(raw_offset, plan.shape.sns_compression_secret_bits, "sns_compression_glwe");
+        const auto lwe = extract_segment(plan.shape.lwe_secret_bits, "lwe");
+        work_completed += plan.shape.lwe_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
+        const auto lwe_hat = extract_segment(plan.shape.lwe_hat_secret_bits, "lwe_hat");
+        work_completed += plan.shape.lwe_hat_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
+        const auto glwe = extract_segment(plan.shape.glwe_secret_bits, "glwe");
+        work_completed += plan.shape.glwe_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
+        const auto compression_glwe = extract_segment(plan.shape.compression_secret_bits, "compression_glwe");
+        work_completed += plan.shape.compression_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
+        const auto sns_glwe = extract_segment(plan.shape.sns_glwe_secret_bits, "sns_glwe");
+        work_completed += plan.shape.sns_glwe_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
+        const auto sns_compression_glwe = extract_segment(plan.shape.sns_compression_secret_bits, "sns_compression_glwe");
+        work_completed += plan.shape.sns_compression_secret_bits;
+        update_keygen_progress(round_id, "load_secret_shares", work_completed, work_total);
 
         key_output.secret_shares.lwe = lwe;
         key_output.secret_shares.lwe_hat = lwe_hat;
@@ -1518,55 +1606,62 @@ private:
         key_output.secret_shares.sns_glwe = sns_glwe;
         key_output.secret_shares.sns_compression_glwe = sns_compression_glwe;
 
+        std::filesystem::create_directories(output_dir);
+        const std::filesystem::path summary_path = std::filesystem::path(output_dir) / ("keygen_party_" + std::to_string(party_id_) + ".txt");
+        const std::filesystem::path secret_key_path = std::filesystem::path(output_dir) / ("party_" + std::to_string(party_id_) + ".secret.key");
+        const std::filesystem::path public_key_path = std::filesystem::path(output_dir) / ("party_" + std::to_string(party_id_) + ".public.key");
+
+        host::dkg::PublicKeyStreamCounts public_counts;
+        public_counts.pk = plan.shape.public_key_ciphertexts;
+        public_counts.ksk = glwe.size();
+        public_counts.pksk_lwe = plan.params.regular.pksk_destination == host::dkg::PkskDestination::kSmall ? lwe_hat.size() : 0;
+        public_counts.pksk_glwe = plan.params.regular.pksk_destination == host::dkg::PkskDestination::kBig ? lwe_hat.size() : 0;
+        public_counts.bk = lwe.size();
+        public_counts.bk_sns = !sns_glwe.empty() ? lwe.size() : 0;
+        public_counts.compression_key = !compression_glwe.empty() ? glwe.size() : 0;
+        public_counts.decompression_key = !compression_glwe.empty() ? compression_glwe.size() : 0;
+
+        host::dkg::PublicKeyStreamWriter public_writer;
+        if (!public_writer.open(public_key_path.string(), plan, preproc_reader.seed(), public_counts, &error_message))
+        {
+            throw std::runtime_error(error_message);
+        }
+
         uint64_t open_counter = (round_id << 32U) | 1U;
-        key_output.public_material.pk.reserve(plan.shape.public_key_ciphertexts);
+        size_t pk_count = 0;
         for (size_t i = 0; i < plan.shape.public_key_ciphertexts; ++i)
         {
             host::dkg::SharedLweCiphertext ctxt;
             if (!host::dkg::DistributedEncryption::enc_lwe(
-                    material.seed,
+                    preproc_reader.seed(),
                     static_cast<uint64_t>(i),
                     noise::RingElementRaw{},
                     lwe,
                     pop_noise(host::dkg::NoiseKind::kLweHat, "pk"),
                     lwe.size(),
-                    true,
+                    false,
                     &ctxt))
             {
                 throw std::runtime_error("Failed to build pk ciphertext");
             }
-            key_output.public_material.pk.push_back(ctxt);
-        }
-
-        key_output.public_material.ksk.reserve(glwe.size());
-        for (size_t i = 0; i < glwe.size(); ++i)
-        {
-            host::dkg::SharedLevCiphertext ctxt;
-            if (!host::dkg::DistributedEncryption::enc_lev(
-                    material.seed,
-                    0x100000ULL + static_cast<uint64_t>(i * plan.params.regular.ks_level),
-                    noise::raw_from_ring(glwe[i].value),
-                    lwe,
-                    pop_noise_vec(host::dkg::NoiseKind::kLwe, plan.params.regular.ks_level, "ksk"),
-                    lwe.size(),
-                    plan.params.regular.ks_base_log,
-                    plan.params.regular.ks_level,
-                    true,
-                    &ctxt))
+            if (!public_writer.write_pk(ctxt, &error_message))
             {
-                throw std::runtime_error("Failed to build ksk ciphertext");
+                throw std::runtime_error(error_message);
             }
-            key_output.public_material.ksk.push_back(ctxt);
+            ++pk_count;
+            ++work_completed;
+            update_keygen_progress(round_id, "pk", work_completed, work_total);
         }
 
+        size_t pksk_lwe_count = 0;
+        size_t pksk_glwe_count = 0;
         if (plan.params.regular.pksk_destination == host::dkg::PkskDestination::kSmall)
         {
-            key_output.public_material.pksk_lwe.reserve(lwe_hat.size());
             for (size_t i = 0; i < lwe_hat.size(); ++i)
             {
                 host::dkg::SharedLevCiphertext ctxt;
                 if (!host::dkg::DistributedEncryption::enc_lev(
-                        material.seed,
+                        preproc_reader.seed(),
                         0x200000ULL + static_cast<uint64_t>(i * plan.params.regular.pksk_level),
                         noise::raw_from_ring(lwe_hat[i].value),
                         lwe,
@@ -1574,22 +1669,27 @@ private:
                         lwe.size(),
                         plan.params.regular.pksk_base_log,
                         plan.params.regular.pksk_level,
-                        true,
+                        false,
                         &ctxt))
                 {
                     throw std::runtime_error("Failed to build pksk_lwe ciphertext");
                 }
-                key_output.public_material.pksk_lwe.push_back(ctxt);
+                if (!public_writer.write_pksk_lwe(ctxt, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++pksk_lwe_count;
+                work_completed += plan.params.regular.pksk_level;
+                update_keygen_progress(round_id, "pksk_lwe", work_completed, work_total);
             }
         }
         else if (plan.params.regular.pksk_destination == host::dkg::PkskDestination::kBig)
         {
-            key_output.public_material.pksk_glwe.reserve(lwe_hat.size());
             for (size_t i = 0; i < lwe_hat.size(); ++i)
             {
                 host::dkg::SharedGlevCiphertext ctxt;
                 if (!host::dkg::DistributedEncryption::enc_glev(
-                        material.seed,
+                        preproc_reader.seed(),
                         0x300000ULL + static_cast<uint64_t>(i * plan.params.regular.pksk_level),
                         noise::raw_from_ring(lwe_hat[i].value),
                         glwe,
@@ -1597,16 +1697,49 @@ private:
                         glwe.size(),
                         plan.params.regular.pksk_base_log,
                         plan.params.regular.pksk_level,
-                        true,
+                        false,
                         &ctxt))
                 {
                     throw std::runtime_error("Failed to build pksk_glwe ciphertext");
                 }
-                key_output.public_material.pksk_glwe.push_back(ctxt);
+                if (!public_writer.write_pksk_glwe(ctxt, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++pksk_glwe_count;
+                work_completed += plan.params.regular.pksk_level;
+                update_keygen_progress(round_id, "pksk_glwe", work_completed, work_total);
             }
         }
 
-        key_output.public_material.bk.reserve(lwe.size());
+        size_t ksk_count = 0;
+        for (size_t i = 0; i < glwe.size(); ++i)
+        {
+            host::dkg::SharedLevCiphertext ctxt;
+            if (!host::dkg::DistributedEncryption::enc_lev(
+                    preproc_reader.seed(),
+                    0x100000ULL + static_cast<uint64_t>(i * plan.params.regular.ks_level),
+                    noise::raw_from_ring(glwe[i].value),
+                    lwe,
+                    pop_noise_vec(host::dkg::NoiseKind::kLwe, plan.params.regular.ks_level, "ksk"),
+                    lwe.size(),
+                    plan.params.regular.ks_base_log,
+                    plan.params.regular.ks_level,
+                    false,
+                    &ctxt))
+            {
+                throw std::runtime_error("Failed to build ksk ciphertext");
+            }
+            if (!public_writer.write_ksk(ctxt, &error_message))
+            {
+                throw std::runtime_error(error_message);
+            }
+            ++ksk_count;
+            work_completed += plan.params.regular.ks_level;
+            update_keygen_progress(round_id, "ksk", work_completed, work_total);
+        }
+
+        size_t bk_count = 0;
         for (size_t i = 0; i < lwe.size(); ++i)
         {
             std::vector<algebra::RingShare> multiplied_rows;
@@ -1624,7 +1757,7 @@ private:
 
             host::dkg::SharedGgswCiphertext ctxt;
             if (!host::dkg::DistributedEncryption::enc_ggsw(
-                    material.seed,
+                    preproc_reader.seed(),
                     0x400000ULL + static_cast<uint64_t>(i * row_noise.size() * plan.params.regular.bk_level),
                     noise::raw_from_ring(lwe[i].value),
                     glwe,
@@ -1634,17 +1767,23 @@ private:
                     glwe.size(),
                     plan.params.regular.bk_base_log,
                     plan.params.regular.bk_level,
-                    true,
+                    false,
                     &ctxt))
             {
                 throw std::runtime_error("Failed to build bk ciphertext");
             }
-            key_output.public_material.bk.push_back(ctxt);
+            if (!public_writer.write_bk(ctxt, &error_message))
+            {
+                throw std::runtime_error(error_message);
+            }
+            ++bk_count;
+            work_completed += glwe.size();
+            update_keygen_progress(round_id, "bk", work_completed, work_total);
         }
 
+        size_t bk_sns_count = 0;
         if (!sns_glwe.empty())
         {
-            key_output.public_material.bk_sns.reserve(lwe.size());
             for (size_t i = 0; i < lwe.size(); ++i)
             {
                 std::vector<algebra::RingShare> multiplied_rows;
@@ -1662,7 +1801,7 @@ private:
 
                 host::dkg::SharedGgswCiphertext ctxt;
                 if (!host::dkg::DistributedEncryption::enc_ggsw(
-                        material.seed,
+                        preproc_reader.seed(),
                         0x500000ULL + static_cast<uint64_t>(i * row_noise.size() * plan.params.sns.bk_level),
                         noise::raw_from_ring(lwe[i].value),
                         sns_glwe,
@@ -1672,18 +1811,25 @@ private:
                         sns_glwe.size(),
                         plan.params.sns.bk_base_log,
                         plan.params.sns.bk_level,
-                        true,
+                        false,
                         &ctxt))
                 {
                     throw std::runtime_error("Failed to build bk_sns ciphertext");
                 }
-                key_output.public_material.bk_sns.push_back(ctxt);
+                if (!public_writer.write_bk_sns(ctxt, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++bk_sns_count;
+                work_completed += sns_glwe.size();
+                update_keygen_progress(round_id, "bk_sns", work_completed, work_total);
             }
         }
 
+        size_t compression_count = 0;
+        size_t decompression_count = 0;
         if (!compression_glwe.empty())
         {
-            key_output.public_material.compression_key.reserve(glwe.size());
             for (size_t i = 0; i < glwe.size(); ++i)
             {
                 std::vector<algebra::RingShare> multiplied_rows;
@@ -1704,7 +1850,7 @@ private:
 
                 host::dkg::SharedGgswCiphertext ctxt;
                 if (!host::dkg::DistributedEncryption::enc_ggsw(
-                        material.seed,
+                        preproc_reader.seed(),
                         0x600000ULL + static_cast<uint64_t>(i * row_noise.size() * plan.params.regular.compression.packing_ks_level),
                         noise::raw_from_ring(glwe[i].value),
                         compression_glwe,
@@ -1714,20 +1860,25 @@ private:
                         compression_glwe.size(),
                         plan.params.regular.compression.packing_ks_base_log,
                         plan.params.regular.compression.packing_ks_level,
-                        true,
+                        false,
                         &ctxt))
                 {
                     throw std::runtime_error("Failed to build compression key ciphertext");
                 }
-                key_output.public_material.compression_key.push_back(ctxt);
+                if (!public_writer.write_compression_key(ctxt, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++compression_count;
+                work_completed += compression_glwe.size();
+                update_keygen_progress(round_id, "compression_key", work_completed, work_total);
             }
 
-            key_output.public_material.decompression_key.reserve(compression_glwe.size());
             for (size_t i = 0; i < compression_glwe.size(); ++i)
             {
                 host::dkg::SharedGlevCiphertext ctxt;
                 if (!host::dkg::DistributedEncryption::enc_glev(
-                        material.seed,
+                        preproc_reader.seed(),
                         0x700000ULL + static_cast<uint64_t>(i * plan.params.regular.compression.br_level),
                         noise::raw_from_ring(compression_glwe[i].value),
                         glwe,
@@ -1735,77 +1886,81 @@ private:
                         glwe.size(),
                         plan.params.regular.compression.br_base_log,
                         plan.params.regular.compression.br_level,
-                        true,
+                        false,
                         &ctxt))
                 {
                     throw std::runtime_error("Failed to build decompression key ciphertext");
                 }
-                key_output.public_material.decompression_key.push_back(ctxt);
+                if (!public_writer.write_decompression_key(ctxt, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++decompression_count;
+                work_completed += plan.params.regular.compression.br_level;
+                update_keygen_progress(round_id, "decompression_key", work_completed, work_total);
             }
         }
 
+        size_t sns_compression_blocks = 0;
         if (!sns_compression_glwe.empty())
         {
-            key_output.public_material.sns_compression_key.reserve(sns_glwe.size());
-            for (size_t i = 0; i < sns_glwe.size(); ++i)
+            if (!public_writer.begin_sns_compression_key(
+                    sns_glwe.size(),
+                    sns_compression_glwe.size(),
+                    plan.params.sns.compression.packing_ks_polynomial_size,
+                    plan.params.sns.compression.packing_ks_base_log,
+                    plan.params.sns.compression.packing_ks_level,
+                    &error_message))
             {
-                std::vector<algebra::RingShare> multiplied_rows;
-                multiplied_rows.reserve(sns_compression_glwe.size());
-                for (const auto& compression_share : sns_compression_glwe)
-                {
-                    multiplied_rows.push_back(mul_online(&open_counter, compression_share, sns_glwe[i], pop_triple()));
-                }
+                throw std::runtime_error(error_message);
+            }
 
-                std::vector<std::vector<algebra::RingShare>> row_noise(sns_compression_glwe.size() + 1);
-                for (size_t row = 0; row < row_noise.size(); ++row)
-                {
-                    row_noise[row] = pop_noise_vec(
-                        host::dkg::NoiseKind::kSnsCompressionKsk,
-                        plan.params.sns.compression.packing_ks_level,
-                        "sns_compression_key");
-                }
-
-                host::dkg::SharedGgswCiphertext ctxt;
-                if (!host::dkg::DistributedEncryption::enc_ggsw(
-                        material.seed,
-                        0x800000ULL + static_cast<uint64_t>(i * row_noise.size() * plan.params.sns.compression.packing_ks_level),
-                        noise::raw_from_ring(sns_glwe[i].value),
+            const size_t block_noise_count =
+                plan.params.sns.compression.packing_ks_polynomial_size *
+                plan.params.sns.compression.packing_ks_level;
+            for (size_t input_idx = 0; input_idx < sns_glwe.size(); ++input_idx)
+            {
+                host::dkg::SharedPackingKeyswitchBlock block;
+                if (!host::dkg::DistributedEncryption::enc_lwe_packing_keyswitch_block(
+                        preproc_reader.seed(),
+                        0x800000ULL,
+                        input_idx,
+                        sns_glwe,
                         sns_compression_glwe,
-                        sns_compression_glwe,
-                        multiplied_rows,
-                        row_noise,
+                        pop_noise_vec(
+                            host::dkg::NoiseKind::kSnsCompressionKsk,
+                            block_noise_count,
+                            "sns_compression_key"),
+                        sns_glwe.size(),
                         sns_compression_glwe.size(),
+                        plan.params.sns.compression.packing_ks_polynomial_size,
                         plan.params.sns.compression.packing_ks_base_log,
                         plan.params.sns.compression.packing_ks_level,
-                        true,
-                        &ctxt))
+                        false,
+                        &block))
                 {
-                    throw std::runtime_error("Failed to build sns compression key ciphertext");
+                    throw std::runtime_error("Failed to build sns compression packing keyswitch block");
                 }
-                key_output.public_material.sns_compression_key.push_back(ctxt);
+                if (!public_writer.write_sns_compression_block(block, &error_message))
+                {
+                    throw std::runtime_error(error_message);
+                }
+                ++sns_compression_blocks;
+                work_completed += block_noise_count;
+                update_keygen_progress(round_id, "sns_compression_key", work_completed, work_total);
             }
         }
-
-        std::filesystem::create_directories(output_dir);
-        const std::filesystem::path summary_path = std::filesystem::path(output_dir) / ("keygen_party_" + std::to_string(party_id_) + ".txt");
-        const std::filesystem::path secret_key_path = std::filesystem::path(output_dir) / ("party_" + std::to_string(party_id_) + ".secret.key");
-        const std::filesystem::path public_key_path = std::filesystem::path(output_dir) / ("party_" + std::to_string(party_id_) + ".public.key");
+        if (!public_writer.close(&error_message))
+        {
+            throw std::runtime_error(error_message);
+        }
 
         host::dkg::SecretKeyBundle secret_bundle;
         secret_bundle.plan = key_output.plan;
         secret_bundle.public_seed = key_output.public_seed;
         secret_bundle.secret_shares = key_output.secret_shares;
 
-        host::dkg::PublicKeyBundle public_bundle;
-        public_bundle.plan = key_output.plan;
-        public_bundle.public_seed = key_output.public_seed;
-        public_bundle.public_material = key_output.public_material;
-
         if (!host::dkg::save_secret_key_file(secret_key_path.string(), secret_bundle, &error_message))
-        {
-            throw std::runtime_error(error_message);
-        }
-        if (!host::dkg::save_public_key_file(public_key_path.string(), public_bundle, &error_message))
         {
             throw std::runtime_error(error_message);
         }
@@ -1817,23 +1972,24 @@ private:
         summary << "party_id=" << party_id_ << "\n";
         summary << "session_id=" << session_id << "\n";
         summary << "preset=" << plan.params.preset_name << "\n";
-        summary << "seed_low=" << material.seed.low << "\n";
-        summary << "seed_high=" << material.seed.high << "\n";
+        summary << "seed_low=" << preproc_reader.seed().low << "\n";
+        summary << "seed_high=" << preproc_reader.seed().high << "\n";
         summary << "lwe_shares=" << lwe.size() << "\n";
         summary << "lwe_hat_shares=" << lwe_hat.size() << "\n";
         summary << "glwe_shares=" << glwe.size() << "\n";
         summary << "compression_glwe_shares=" << compression_glwe.size() << "\n";
         summary << "sns_glwe_shares=" << sns_glwe.size() << "\n";
         summary << "sns_compression_glwe_shares=" << sns_compression_glwe.size() << "\n";
-        summary << "pk_ctxts=" << key_output.public_material.pk.size() << "\n";
-        summary << "ksk_ctxts=" << key_output.public_material.ksk.size() << "\n";
-        summary << "pksk_lwe_ctxts=" << key_output.public_material.pksk_lwe.size() << "\n";
-        summary << "pksk_glwe_ctxts=" << key_output.public_material.pksk_glwe.size() << "\n";
-        summary << "bk_ctxts=" << key_output.public_material.bk.size() << "\n";
-        summary << "bk_sns_ctxts=" << key_output.public_material.bk_sns.size() << "\n";
-        summary << "compression_ctxts=" << key_output.public_material.compression_key.size() << "\n";
-        summary << "decompression_ctxts=" << key_output.public_material.decompression_key.size() << "\n";
-        summary << "sns_compression_ctxts=" << key_output.public_material.sns_compression_key.size() << "\n";
+        summary << "pk_ctxts=" << pk_count << "\n";
+        summary << "ksk_ctxts=" << ksk_count << "\n";
+        summary << "pksk_lwe_ctxts=" << pksk_lwe_count << "\n";
+        summary << "pksk_glwe_ctxts=" << pksk_glwe_count << "\n";
+        summary << "bk_ctxts=" << bk_count << "\n";
+        summary << "bk_sns_ctxts=" << bk_sns_count << "\n";
+        summary << "compression_ctxts=" << compression_count << "\n";
+        summary << "decompression_ctxts=" << decompression_count << "\n";
+        summary << "sns_compression_blocks=" << sns_compression_blocks << "\n";
+        summary << "public_material_seeded_masks=1\n";
         summary << "secret_key_file=" << secret_key_path.string() << "\n";
         summary << "public_key_file=" << public_key_path.string() << "\n";
 
@@ -2138,7 +2294,7 @@ private:
     void log(const std::string& message)
     {
         static const bool verbose = []() {
-            const char* env = std::getenv("NOISE_PARTY_VERBOSE");
+            const char* env = std::getenv("PARTY_NODE_VERBOSE");
             if (env == nullptr)
             {
                 env = std::getenv("NOISE_LOG_VERBOSE");
@@ -2209,10 +2365,10 @@ private:
                     continue;
                 }
 
-                noise_rpc::StatusRequest request;
+                dkg_rpc::StatusRequest request;
                 request.set_full(false);
                 grpc::ClientContext context;
-                noise_rpc::StatusReply response;
+                dkg_rpc::StatusReply response;
                 const auto rpc_status = stubs_[i]->Status(&context, request, &response);
                 if (!rpc_status.ok())
                 {
@@ -2263,10 +2419,10 @@ private:
                     continue;
                 }
 
-                noise_rpc::StatusRequest request;
+                dkg_rpc::StatusRequest request;
                 request.set_full(false);
                 grpc::ClientContext context;
-                noise_rpc::StatusReply response;
+                dkg_rpc::StatusReply response;
                 const auto rpc_status = stubs_[i]->Status(&context, request, &response);
                 if (!rpc_status.ok())
                 {
@@ -2304,17 +2460,17 @@ private:
     }
 };
 
-class NoisePartyServiceImpl final : public noise_rpc::NoiseParty::Service
+class PartyNodeRpcServiceImpl final : public dkg_rpc::PartyNodeRpc::Service
 {
 public:
-    explicit NoisePartyServiceImpl(PartyNode* node)
+    explicit PartyNodeRpcServiceImpl(PartyNode* node)
         : node_(node)
     {
     }
 
     grpc::Status StartRound(grpc::ServerContext*,
-                            const noise_rpc::StartRequest* request,
-                            noise_rpc::StartReply* reply) override
+                            const dkg_rpc::StartRequest* request,
+                            dkg_rpc::StartReply* reply) override
     {
         try
         {
@@ -2332,8 +2488,8 @@ public:
     }
 
     grpc::Status BatchShare(grpc::ServerContext*,
-                            const noise_rpc::BatchShareRequest* request,
-                            noise_rpc::BatchAckReply* reply) override
+                            const dkg_rpc::BatchShareRequest* request,
+                            dkg_rpc::BatchAckReply* reply) override
     {
         try
         {
@@ -2358,8 +2514,8 @@ public:
     }
 
     grpc::Status StartTripleRound(grpc::ServerContext*,
-                                  const noise_rpc::StartRequest* request,
-                                  noise_rpc::StartReply* reply) override
+                                  const dkg_rpc::StartRequest* request,
+                                  dkg_rpc::StartReply* reply) override
     {
         try
         {
@@ -2377,8 +2533,8 @@ public:
     }
 
     grpc::Status BatchTripleD(grpc::ServerContext*,
-                              const noise_rpc::BatchTripleDRequest* request,
-                              noise_rpc::BatchTripleAckReply* reply) override
+                              const dkg_rpc::BatchTripleDRequest* request,
+                              dkg_rpc::BatchTripleAckReply* reply) override
     {
         try
         {
@@ -2400,8 +2556,8 @@ public:
     }
 
     grpc::Status StartBitRound(grpc::ServerContext*,
-                               const noise_rpc::StartRequest* request,
-                               noise_rpc::StartReply* reply) override
+                               const dkg_rpc::StartRequest* request,
+                               dkg_rpc::StartReply* reply) override
     {
         try
         {
@@ -2419,8 +2575,8 @@ public:
     }
 
     grpc::Status BatchBitV(grpc::ServerContext*,
-                           const noise_rpc::BatchBitVRequest* request,
-                           noise_rpc::BatchBitAckReply* reply) override
+                           const dkg_rpc::BatchBitVRequest* request,
+                           dkg_rpc::BatchBitAckReply* reply) override
     {
         try
         {
@@ -2442,8 +2598,8 @@ public:
     }
 
     grpc::Status StartKeygen(grpc::ServerContext*,
-                             const noise_rpc::KeygenStartRequest* request,
-                             noise_rpc::StartReply* reply) override
+                             const dkg_rpc::KeygenStartRequest* request,
+                             dkg_rpc::StartReply* reply) override
     {
         try
         {
@@ -2465,12 +2621,12 @@ public:
     }
 
     grpc::Status BatchKeygenOpen(grpc::ServerContext*,
-                                 const noise_rpc::BatchKeygenOpenRequest* request,
-                                 noise_rpc::BatchKeygenOpenReply* reply) override
+                                 const dkg_rpc::BatchKeygenOpenRequest* request,
+                                 dkg_rpc::BatchKeygenOpenReply* reply) override
     {
         try
         {
-            std::vector<noise_rpc::KeygenOpenSharePackage> packages;
+            std::vector<dkg_rpc::KeygenOpenSharePackage> packages;
             packages.reserve(static_cast<size_t>(request->packages_size()));
             for (const auto& entry : request->packages())
             {
@@ -2488,8 +2644,8 @@ public:
     }
 
     grpc::Status Status(grpc::ServerContext*,
-                        const noise_rpc::StatusRequest* request,
-                        noise_rpc::StatusReply* reply) override
+                        const dkg_rpc::StatusRequest* request,
+                        dkg_rpc::StatusReply* reply) override
     {
         const bool full = request->full();
         host::StatusSnapshot status = node_->GetStatus();
@@ -2506,7 +2662,7 @@ int main(int argc, const char* argv[])
 {
     if (argc < 4)
     {
-        std::cerr << "Usage: noise_party <enclave_path> <config_path> <party_name>" << std::endl;
+        std::cerr << "Usage: party_node <enclave_path> <config_path> <party_name>" << std::endl;
         return 1;
     }
 
@@ -2529,7 +2685,7 @@ int main(int argc, const char* argv[])
             self.endpoint.port,
             peers);
         party.initialize();
-        NoisePartyServiceImpl service(&party);
+        PartyNodeRpcServiceImpl service(&party);
         grpc::ServerBuilder builder;
         const std::string listen_addr = "0.0.0.0:" + std::to_string(self.endpoint.port);
         builder.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
@@ -2551,3 +2707,4 @@ int main(int argc, const char* argv[])
         return 1;
     }
 }
+

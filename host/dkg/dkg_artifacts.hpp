@@ -1,5 +1,5 @@
-#ifndef HOST_DKG_KEYGEN_HPP
-#define HOST_DKG_KEYGEN_HPP
+#ifndef HOST_DKG_DKG_ARTIFACTS_HPP
+#define HOST_DKG_DKG_ARTIFACTS_HPP
 
 #include <cstdint>
 #include <string>
@@ -7,7 +7,6 @@
 
 #include "../../algebra/sharing/mul.hpp"
 #include "../../enclave/common/noise_types.h"
-#include "../config/config.hpp"
 #include "encryption.hpp"
 #include "planner.hpp"
 
@@ -15,6 +14,8 @@ namespace host
 {
 namespace dkg
 {
+// Preprocessing records are stored as party-local signed vectors. Even when the
+// runtime consumes them in streaming form, these types remain the canonical schema.
 struct SharedBitVector
 {
     uint64_t round_id = 0;
@@ -38,14 +39,7 @@ struct SharedTripleVector
     std::vector<algebra::RingTripleShare> triples;
 };
 
-struct PreprocessedKeygenMaterial
-{
-    PublicSeed seed;
-    std::vector<SharedBitVector> raw_bits;
-    std::vector<SharedNoiseVector> noises;
-    std::vector<SharedTripleVector> triples;
-};
-
+// Secret shares that remain private to one party after key generation.
 struct SecretKeyShares
 {
     std::vector<algebra::RingShare> lwe;
@@ -56,6 +50,8 @@ struct SecretKeyShares
     std::vector<algebra::RingShare> sns_compression_glwe;
 };
 
+// Public key material produced by the DKG. Large online paths now stream this
+// directly to disk, but the structure is still useful as a serialization schema.
 struct PublicKeyMaterial
 {
     std::vector<SharedLweCiphertext> pk;
@@ -66,7 +62,7 @@ struct PublicKeyMaterial
     std::vector<SharedGgswCiphertext> bk_sns;
     std::vector<SharedGgswCiphertext> compression_key;
     std::vector<SharedGlevCiphertext> decompression_key;
-    std::vector<SharedGgswCiphertext> sns_compression_key;
+    SharedLwePackingKeyswitchKey sns_compression_key;
 };
 
 struct KeygenOutput
@@ -89,27 +85,6 @@ struct PublicKeyBundle
     DkgPlan plan;
     PublicSeed public_seed;
     PublicKeyMaterial public_material;
-};
-
-class DistributedKeyGen
-{
-public:
-    static DkgPlan make_plan(const RuntimeConfig& config)
-    {
-        return build_plan(config);
-    }
-
-    static bool validate_preprocessing(
-        const DkgPlan& plan,
-        const PreprocessedKeygenMaterial& material,
-        std::string* error_message = nullptr);
-
-    static bool keygen(
-        const RuntimeConfig& config,
-        uint64_t my_party_id,
-        const PreprocessedKeygenMaterial& material,
-        KeygenOutput* out,
-        std::string* error_message = nullptr);
 };
 } // namespace dkg
 } // namespace host

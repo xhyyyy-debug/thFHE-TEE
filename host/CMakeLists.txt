@@ -1,8 +1,8 @@
-set(EDL_FILE ${CMAKE_SOURCE_DIR}/noise.edl)
+set(EDL_FILE ${CMAKE_SOURCE_DIR}/dkg.edl)
 set(HOST_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 set(PROTO_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated_proto)
 set(PROTO_DIR ${CMAKE_SOURCE_DIR}/proto)
-set(PROTO_FILE ${PROTO_DIR}/noise.proto)
+set(PROTO_FILE ${PROTO_DIR}/dkg.proto)
 
 find_package(OpenEnclave CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -64,8 +64,8 @@ file(MAKE_DIRECTORY ${PROTO_GEN_DIR})
 
 add_custom_command(
     OUTPUT
-        ${HOST_GEN_DIR}/noise_u.c
-        ${HOST_GEN_DIR}/noise_u.h
+        ${HOST_GEN_DIR}/dkg_u.c
+        ${HOST_GEN_DIR}/dkg_u.h
     COMMAND
         ${OEEDGER8R_COMMAND}
         --untrusted ${EDL_FILE}
@@ -77,23 +77,23 @@ add_custom_command(
 )
 
 set_source_files_properties(
-    ${HOST_GEN_DIR}/noise_u.c
-    ${HOST_GEN_DIR}/noise_u.h
+    ${HOST_GEN_DIR}/dkg_u.c
+    ${HOST_GEN_DIR}/dkg_u.h
     PROPERTIES GENERATED TRUE
 )
 
-add_custom_target(noise_host_edge
+add_custom_target(dkg_host_edge
     DEPENDS
-        ${HOST_GEN_DIR}/noise_u.c
-        ${HOST_GEN_DIR}/noise_u.h
+        ${HOST_GEN_DIR}/dkg_u.c
+        ${HOST_GEN_DIR}/dkg_u.h
 )
 
 add_custom_command(
     OUTPUT
-        ${PROTO_GEN_DIR}/noise.pb.cc
-        ${PROTO_GEN_DIR}/noise.pb.h
-        ${PROTO_GEN_DIR}/noise.grpc.pb.cc
-        ${PROTO_GEN_DIR}/noise.grpc.pb.h
+        ${PROTO_GEN_DIR}/dkg.pb.cc
+        ${PROTO_GEN_DIR}/dkg.pb.h
+        ${PROTO_GEN_DIR}/dkg.grpc.pb.cc
+        ${PROTO_GEN_DIR}/dkg.grpc.pb.h
     COMMAND
         ${PROTOC_EXECUTABLE}
         --grpc_out ${PROTO_GEN_DIR}
@@ -103,21 +103,21 @@ add_custom_command(
         ${PROTO_FILE}
     DEPENDS
         ${PROTO_FILE}
-    COMMENT "Generating gRPC sources from noise.proto"
+    COMMENT "Generating gRPC sources from dkg.proto"
 )
 
-add_library(noise_grpc SHARED
-    ${PROTO_GEN_DIR}/noise.pb.cc
-    ${PROTO_GEN_DIR}/noise.grpc.pb.cc
+add_library(dkg_grpc SHARED
+    ${PROTO_GEN_DIR}/dkg.pb.cc
+    ${PROTO_GEN_DIR}/dkg.grpc.pb.cc
 )
 
-target_include_directories(noise_grpc
+target_include_directories(dkg_grpc
     PUBLIC
         ${PROTO_GEN_DIR}
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(noise_grpc
+target_link_libraries(dkg_grpc
     PUBLIC
         protobuf::libprotobuf
         gRPC::grpc++
@@ -134,3 +134,4 @@ add_subdirectory(config)
 add_subdirectory(protocol)
 add_subdirectory(dkg)
 add_subdirectory(apps)
+

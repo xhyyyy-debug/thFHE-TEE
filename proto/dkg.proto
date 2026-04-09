@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package noise_rpc;
+package dkg_rpc;
 
 message Z128Raw {
   uint64 lo = 1;
@@ -140,7 +140,7 @@ message StatusReply {
   repeated BitShare bits = 14;
 }
 
-service NoiseParty {
+service PartyNodeRpc {
   rpc StartRound(StartRequest) returns (StartReply);
   rpc BatchShare(BatchShareRequest) returns (BatchAckReply);
   rpc StartTripleRound(StartRequest) returns (StartReply);
@@ -151,3 +151,4 @@ service NoiseParty {
   rpc BatchKeygenOpen(BatchKeygenOpenRequest) returns (BatchKeygenOpenReply);
   rpc Status(StatusRequest) returns (StatusReply);
 }
+

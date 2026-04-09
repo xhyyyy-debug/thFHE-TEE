@@ -10,6 +10,8 @@ namespace host
 {
 namespace dkg
 {
+// Counts the logical shape of the secret vectors and output key material for a
+// given DKG parameter set. This is the bridge between parameters and workflow.
 struct KeyMaterialShape
 {
     size_t lwe_secret_bits = 0;
@@ -23,6 +25,8 @@ struct KeyMaterialShape
     size_t public_key_ciphertexts = 0;
 };
 
+// A DKG plan is the canonical "execution contract" shared by preprocessing and
+// keygen: it fixes parameters, expected preprocessing counts, and key shapes.
 struct DkgPlan
 {
     DkgParams params;

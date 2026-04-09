@@ -1,24 +1,24 @@
 set_source_files_properties(
-    ${HOST_GEN_DIR}/noise_u.c
+    ${HOST_GEN_DIR}/dkg_u.c
     PROPERTIES GENERATED TRUE
 )
 
-add_executable(noise_party
-    noise_party_main.cpp
-    ${HOST_GEN_DIR}/noise_u.c
+add_executable(party_node
+    party_node_main.cpp
+    ${HOST_GEN_DIR}/dkg_u.c
 )
 
-target_include_directories(noise_party
+target_include_directories(party_node
     PRIVATE
         ${CMAKE_SOURCE_DIR}
         ${HOST_GEN_DIR}
 )
 
-target_link_libraries(noise_party
+target_link_libraries(party_node
     PRIVATE
         host_protocol
         host_dkg
-        noise_grpc
+        dkg_grpc
         algebra_sharing
         protobuf::libprotobuf
         gRPC::grpc++
@@ -29,37 +29,37 @@ target_link_libraries(noise_party
         Threads::Threads
 )
 
-add_dependencies(noise_party noise_enclave_sign)
-add_dependencies(noise_party noise_host_edge)
+add_dependencies(party_node dkg_enclave_sign)
+add_dependencies(party_node dkg_host_edge)
 
-if (NOT DEFINED NOISE_SIGNED_ENCLAVE)
-    message(FATAL_ERROR "NOISE_SIGNED_ENCLAVE not set. Ensure enclave is configured before host.")
+if (NOT DEFINED SIGNED_ENCLAVE_PATH)
+    message(FATAL_ERROR "SIGNED_ENCLAVE_PATH not set. Ensure enclave is configured before host.")
 endif()
 
 add_custom_command(
-    TARGET noise_party
+    TARGET party_node
     POST_BUILD
     COMMAND
         ${CMAKE_COMMAND} -E copy_if_different
-        ${NOISE_SIGNED_ENCLAVE}
-        $<TARGET_FILE_DIR:noise_party>
+        ${SIGNED_ENCLAVE_PATH}
+        $<TARGET_FILE_DIR:party_node>
     COMMENT "Copying signed enclave next to host binary"
 )
 
-add_executable(noise_ctl
-    noise_ctl_main.cpp
+add_executable(round_controller
+    round_controller_main.cpp
 )
 
-target_include_directories(noise_ctl
+target_include_directories(round_controller
     PRIVATE
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(noise_ctl
+target_link_libraries(round_controller
     PRIVATE
         host_protocol
         host_dkg
-        noise_grpc
+        dkg_grpc
         algebra_sharing
         protobuf::libprotobuf
         gRPC::grpc++
@@ -69,35 +69,35 @@ target_link_libraries(noise_ctl
         Threads::Threads
 )
 
-add_executable(noise_preproc_plan
-    noise_preproc_plan_main.cpp
+add_executable(preprocessing_plan
+    preprocessing_plan_main.cpp
 )
 
-target_include_directories(noise_preproc_plan
+target_include_directories(preprocessing_plan
     PRIVATE
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(noise_preproc_plan
+target_link_libraries(preprocessing_plan
     PRIVATE
         host_dkg
         Threads::Threads
 )
 
-add_executable(noise_preproc
-    noise_preproc_main.cpp
+add_executable(preprocessing_controller
+    preprocessing_controller_main.cpp
 )
 
-target_include_directories(noise_preproc
+target_include_directories(preprocessing_controller
     PRIVATE
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(noise_preproc
+target_link_libraries(preprocessing_controller
     PRIVATE
         host_dkg
         host_protocol
-        noise_grpc
+        dkg_grpc
         algebra_sharing
         protobuf::libprotobuf
         gRPC::grpc++
@@ -107,20 +107,20 @@ target_link_libraries(noise_preproc
         Threads::Threads
 )
 
-add_executable(noise_keygen
-    noise_keygen_main.cpp
+add_executable(keygen_controller
+    keygen_controller_main.cpp
 )
 
-target_include_directories(noise_keygen
+target_include_directories(keygen_controller
     PRIVATE
         ${CMAKE_SOURCE_DIR}
 )
 
-target_link_libraries(noise_keygen
+target_link_libraries(keygen_controller
     PRIVATE
         host_dkg
         host_protocol
-        noise_grpc
+        dkg_grpc
         algebra_sharing
         protobuf::libprotobuf
         gRPC::grpc++
@@ -129,3 +129,4 @@ target_link_libraries(noise_keygen
         utf8_range::utf8_validity
         Threads::Threads
 )
+

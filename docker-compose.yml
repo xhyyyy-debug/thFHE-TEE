@@ -3,11 +3,11 @@ x-party-common: &party-common
     context: .
     dockerfile: Dockerfile
     args:
-      BASE_IMAGE: noise-base:latest
+      BASE_IMAGE: dkg-base:latest
   working_dir: /app
   volumes:
     - ./artifacts:/artifacts
-    - ./noise.docker.conf:/app/noise.docker.conf:ro
+    - ./dkg.docker.conf:/app/dkg.docker.conf:ro
   devices:
     - /dev/sgx_enclave:/dev/sgx_enclave
     - /dev/sgx_provision:/dev/sgx_provision
@@ -15,7 +15,7 @@ x-party-common: &party-common
 
 services:
   base:
-    image: noise-base:latest
+    image: dkg-base:latest
     build:
       context: .
       dockerfile: Dockerfile.base
@@ -24,54 +24,55 @@ services:
 
   party1:
     <<: *party-common
-    container_name: noise-party-1
+    container_name: party-node-1
     networks:
-      - noise-net
+      - dkg-net
     ports:
       - "7005:7000"
-    entrypoint: ["/app/build/host/apps/noise_party"]
-    command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party1"]
+    entrypoint: ["/app/build/host/apps/party_node"]
+    command: ["/app/build/enclave/dkg_enclave.signed", "/app/dkg.docker.conf", "party1"]
 
   party2:
     <<: *party-common
-    container_name: noise-party-2
+    container_name: party-node-2
     networks:
-      - noise-net
+      - dkg-net
     ports:
       - "7006:7000"
-    entrypoint: ["/app/build/host/apps/noise_party"]
-    command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party2"]
+    entrypoint: ["/app/build/host/apps/party_node"]
+    command: ["/app/build/enclave/dkg_enclave.signed", "/app/dkg.docker.conf", "party2"]
 
   party3:
     <<: *party-common
-    container_name: noise-party-3
+    container_name: party-node-3
     networks:
-      - noise-net
+      - dkg-net
     ports:
       - "7007:7000"
-    entrypoint: ["/app/build/host/apps/noise_party"]
-    command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party3"]
+    entrypoint: ["/app/build/host/apps/party_node"]
+    command: ["/app/build/enclave/dkg_enclave.signed", "/app/dkg.docker.conf", "party3"]
 
   party4:
     <<: *party-common
-    container_name: noise-party-4
+    container_name: party-node-4
     networks:
-      - noise-net
+      - dkg-net
     ports:
       - "7008:7000"
-    entrypoint: ["/app/build/host/apps/noise_party"]
-    command: ["/app/build/enclave/noise_enclave.signed", "/app/noise.docker.conf", "party4"]
+    entrypoint: ["/app/build/host/apps/party_node"]
+    command: ["/app/build/enclave/dkg_enclave.signed", "/app/dkg.docker.conf", "party4"]
 
   controller:
     <<: *party-common
-    container_name: noise-controller
+    container_name: dkg-controller
     profiles:
       - tools
     networks:
-      - noise-net
-    entrypoint: ["/app/build/host/apps/noise_ctl"]
-    command: ["1", "26469202", "100000", "/app/noise.docker.conf"]
+      - dkg-net
+    entrypoint: ["/app/build/host/apps/round_controller"]
+    command: ["1", "26469202", "100000", "/app/dkg.docker.conf"]
 
 networks:
-  noise-net:
+  dkg-net:
     driver: bridge
+

@@ -161,7 +161,7 @@ NoiseInfo sns_compression_noise(const DkgParams& params)
     return make_noise(
         NoiseKind::kSnsCompressionKsk,
         (params.sns.glwe_dimension * params.sns.polynomial_size) *
-            (compression_sk_num_bits(params.sns.compression) + 1) *
+            params.sns.compression.packing_ks_polynomial_size *
             params.sns.compression.packing_ks_level,
         params.sns.compression.noise_bound_bits);
 }
@@ -487,9 +487,6 @@ PreprocessingRequirements compute_preprocessing_requirements(const DkgParams& pa
             compression_sk_num_bits(params.regular.compression);
         const size_t sns_glwe_sk_bits =
             params.sns.enabled ? params.sns.glwe_dimension * params.sns.polynomial_size : 0;
-        const size_t sns_compression_sk_bits =
-            compression_sk_num_bits(params.sns.compression);
-
         out.total_triples =
             params.regular.lwe_dimension * glwe_sk_bits;
         if (params.sns.enabled)
@@ -499,10 +496,6 @@ PreprocessingRequirements compute_preprocessing_requirements(const DkgParams& pa
         if (params.regular.compression.enabled)
         {
             out.total_triples += glwe_sk_bits * compression_sk_bits;
-        }
-        if (params.sns.enabled && params.sns.compression.enabled)
-        {
-            out.total_triples += sns_glwe_sk_bits * sns_compression_sk_bits;
         }
         break;
     }

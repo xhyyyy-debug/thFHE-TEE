@@ -13,12 +13,12 @@ The intended execution model is:
 
 **Project Layout**
 - `docker-compose.yml`: Docker services for `party1`..`party4` and the controller/tool container
-- `noise.docker.conf`: runtime config used inside Docker
+- `dkg.docker.conf`: runtime config used inside Docker
 - `noise.conf`: local non-Docker config
-- `host/apps/noise_preproc_plan_main.cpp`: preprocessing planner entry
-- `host/apps/noise_preproc_main.cpp`: preprocessing runner entry
-- `host/apps/noise_keygen_main.cpp`: online keygen controller entry
-- `host/apps/noise_party_main.cpp`: party service, preprocessing, and online keygen execution
+- `host/apps/preprocessing_plan_main.cpp`: preprocessing planner entry
+- `host/apps/preprocessing_controller_main.cpp`: preprocessing runner entry
+- `host/apps/keygen_controller_main.cpp`: online keygen controller entry
+- `host/apps/party_node_main.cpp`: party service, preprocessing, and online keygen execution
 - `host/config/config.cpp`: all supported config keys
 - `host/dkg/params.cpp`: built-in DKG presets such as `bc_params_sns`
 
@@ -43,16 +43,16 @@ docker compose build
 docker compose up -d party1 party2 party3 party4
 ```
 
-This starts four host+enclave party services on the internal Docker network `noise-net`.
+This starts four host+enclave party services on the internal Docker network `dkg-net`.
 
 **Check The Preprocessing Plan**
 Before running preprocessing, it is useful to inspect how many bits / triples / noises are needed for the current config:
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/apps/noise_preproc_plan \
+  --entrypoint /app/build/host/apps/preprocessing_plan \
   controller \
-  /app/noise.docker.conf
+  /app/dkg.docker.conf
 ```
 
 **Run One Full Online Key Generation**
@@ -70,9 +70,9 @@ Run preprocessing:
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/apps/noise_preproc \
+  --entrypoint /app/build/host/apps/preprocessing_controller \
   controller \
-  1001 /app/noise.docker.conf /artifacts/preproc
+  1001 /app/dkg.docker.conf /artifacts/preproc
 ```
 
 This creates a session directory similar to:
@@ -99,12 +99,12 @@ Then start one online keygen round:
 
 ```bash
 docker compose run --rm \
-  --entrypoint /app/build/host/apps/noise_keygen \
+  --entrypoint /app/build/host/apps/keygen_controller \
   controller \
-  2001 1001 /app/noise.docker.conf /artifacts/preproc /artifacts/keygen
+  2001 1001 /app/dkg.docker.conf /artifacts/preproc /artifacts/keygen
 ```
 
-This is one distributed keygen session across all 4 parties. You do not need to invoke `noise_keygen` once per party anymore.
+This is one distributed keygen session across all 4 parties. You do not need to invoke `keygen_controller` once per party anymore.
 
 When the round succeeds, each party writes its own summary file under:
 
@@ -134,7 +134,7 @@ docker compose down
 **What To Edit**
 
 **1. Party Network / Threshold Basics**
-Edit `noise.docker.conf`:
+Edit `dkg.docker.conf`:
 
 ```ini
 party_count = 4
@@ -160,7 +160,7 @@ If `noise_bound_bits = b`, the protocol targets a final TUniform-style range aro
 Because every party contributes a local noise share, each enclave automatically scales down its local sampling range by the party count before aggregation.
 
 **2. DKG Parameter Preset**
-Also in `noise.docker.conf`, add or modify:
+Also in `dkg.docker.conf`, add or modify:
 
 ```ini
 dkg_preset = bc_params_sns
@@ -175,7 +175,7 @@ If you want to change the built-in preset values themselves, edit:
 - `host/dkg/params.cpp`
 
 **3. Fine-Grained DKG Parameters**
-If you do not want to rely only on a preset, the config parser also supports explicit overrides in `noise.docker.conf`. Common fields include:
+If you do not want to rely only on a preset, the config parser also supports explicit overrides in `dkg.docker.conf`. Common fields include:
 
 ```ini
 dkg_lwe_dimension = ...
@@ -216,14 +216,14 @@ Edit `docker-compose.yml` if you want to change:
 docker compose --profile base build base
 docker compose build
 docker compose up -d party1 party2 party3 party4
-docker compose run --rm --entrypoint /app/build/host/apps/noise_preproc_plan controller /app/noise.docker.conf
-docker compose run --rm --entrypoint /app/build/host/apps/noise_preproc controller 1001 /app/noise.docker.conf /artifacts/preproc
-docker compose run --rm --entrypoint /app/build/host/apps/noise_keygen controller 2001 1001 /app/noise.docker.conf /artifacts/preproc /artifacts/keygen
+docker compose run --rm --entrypoint /app/build/host/apps/preprocessing_plan controller /app/dkg.docker.conf
+docker compose run --rm --entrypoint /app/build/host/apps/preprocessing_controller controller 1001 /app/dkg.docker.conf /artifacts/preproc
+docker compose run --rm --entrypoint /app/build/host/apps/keygen_controller controller 2001 1001 /app/dkg.docker.conf /artifacts/preproc /artifacts/keygen
 docker compose down
 ```
 
 **Current Protocol Notes**
-- `noise_preproc` supports multiple runtime noise bounds in one preprocessing session; it launches separate noise rounds as required by the DKG plan.
+- `preprocessing_controller` supports multiple runtime noise bounds in one preprocessing session; it launches separate noise rounds as required by the DKG plan.
 - preprocessing artifacts are now written per party under `artifacts/preproc/<session_id>/party_<id>/`
 - preprocessing material is serialized into `preprocessing.bin`
 - each saved local `noise`, `bit`, and `triple` record carries a TEE-generated signature tag
@@ -231,16 +231,17 @@ docker compose down
   - `total_bits = raw_secret_bits`
   - TUniform noise generation does not consume preprocessing bits
   - triple counts are derived from the actual online multiplication call sites in keygen
-- `noise_keygen` is now an online controller command: it sends one `StartKeygen` request to each party and waits until all parties reach `KEYGEN_DONE`.
+- `keygen_controller` is now an online controller command: it sends one `StartKeygen` request to each party and waits until all parties reach `KEYGEN_DONE`.
 - During the current online keygen flow, the parties perform online `open` for MPC multiplication through gRPC.
 - before using local preprocessing records in keygen, each party sends them back into its enclave for signature verification
 - each party now writes two serialized key files:
   - `party_<id>.secret.key`
   - `party_<id>.public.key`
   plus the text summary
-- `noise_ctl` is still useful for standalone noise / triple / bit debugging, but the recommended threshold-keygen path is `noise_preproc` followed by `noise_keygen`.
+- `round_controller` is still useful for standalone noise / triple / bit debugging, but the recommended threshold-keygen path is `preprocessing_controller` followed by `keygen_controller`.
 
 **Current Implementation Caveats**
 - The preprocessing store still keeps the collected preprocessing session in a shared artifact directory. This is convenient for bring-up, but it is not yet the final per-party storage layout you would want in a hardened deployment.
 - The online keygen path is now distributed and interactive, but the ciphertext/data structures are still the project's current C++ shared representations rather than a fully kms/tfhe-rs-compatible serialization format.
 - The current `party_<id>.public.key` file is the public-material bundle produced by that party in this implementation. It is not yet a single globally merged/export-ready public key file in the kms sense.
+

@@ -1,14 +1,14 @@
-#include "noise_t.h"
-#include "prog_mpc.h"
+#include "dkg_t.h"
+#include "protocol/enclave_protocol_handler.h"
 
 using noise::AckMessage;
-using noise::ProgMPCHandler;
+using noise::EnclaveProtocolHandler;
 using noise::SharePackage;
 using noise::SharePoint;
 
 namespace
 {
-ProgMPCHandler g_handler;
+EnclaveProtocolHandler g_handler;
 }
 
 extern "C" int ecall_init_party(
@@ -186,3 +186,4 @@ extern "C" int ecall_verify_noise_output(share_point_t* point)
 {
     return g_handler.verify_noise_output(reinterpret_cast<SharePoint*>(point));
 }
+

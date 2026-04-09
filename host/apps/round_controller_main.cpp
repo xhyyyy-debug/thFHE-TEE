@@ -1,3 +1,6 @@
+// Legacy controller utility used for standalone protocol rounds outside the
+// full preprocessing/keygen workflow.
+
 #include <chrono>
 #include <iostream>
 #include <sstream>
@@ -128,9 +131,9 @@ int main(int argc, const char* argv[])
 
     if (argc < 3)
     {
-        std::cerr << "Usage: noise_ctl <round_id> <config_path>" << std::endl;
-        std::cerr << "   or: noise_ctl <round_id> <batch_size> <config_path>" << std::endl;
-        std::cerr << "   or: noise_ctl <round_id> <total_size> <batch_size> <config_path>" << std::endl;
+        std::cerr << "Usage: round_controller <round_id> <config_path>" << std::endl;
+        std::cerr << "   or: round_controller <round_id> <batch_size> <config_path>" << std::endl;
+        std::cerr << "   or: round_controller <round_id> <total_size> <batch_size> <config_path>" << std::endl;
         return 1;
     }
 
@@ -174,7 +177,7 @@ int main(int argc, const char* argv[])
         const uint64_t threshold = config.threshold;
         const ProtocolMode mode = selected_mode();
         const auto peers = host::endpoints_from_config(config);
-        std::vector<std::unique_ptr<noise_rpc::NoiseParty::Stub>> stubs;
+        std::vector<std::unique_ptr<dkg_rpc::PartyNodeRpc::Stub>> stubs;
         stubs.reserve(peers.size());
         grpc::ChannelArguments channel_args;
         channel_args.SetMaxReceiveMessageSize(kGrpcMessageLimitBytes);
@@ -187,7 +190,7 @@ int main(int argc, const char* argv[])
                 target,
                 grpc::InsecureChannelCredentials(),
                 channel_args);
-            stubs.push_back(noise_rpc::NoiseParty::NewStub(channel));
+            stubs.push_back(dkg_rpc::PartyNodeRpc::NewStub(channel));
         }
 
         const uint64_t total_batches = (total_size + batch_size - 1) / batch_size;
@@ -213,10 +216,10 @@ int main(int argc, const char* argv[])
             for (size_t i = 0; i < stubs.size(); ++i)
             {
                 grpc::ClientContext context;
-                noise_rpc::StartRequest request;
+                dkg_rpc::StartRequest request;
                 request.set_round_id(current_round);
                 request.set_batch_size(current_size);
-                noise_rpc::StartReply reply;
+                dkg_rpc::StartReply reply;
                 grpc::Status status;
                 if (mode == ProtocolMode::kTriple)
                 {
@@ -244,9 +247,9 @@ int main(int argc, const char* argv[])
                 for (size_t i = 0; i < peers.size(); ++i)
                 {
                     grpc::ClientContext context;
-                    noise_rpc::StatusRequest request;
+                    dkg_rpc::StatusRequest request;
                     request.set_full(false);
-                    noise_rpc::StatusReply reply;
+                    dkg_rpc::StatusReply reply;
                     const auto status = stubs[i]->Status(&context, request, &reply);
                     if (!status.ok())
                     {
@@ -318,9 +321,9 @@ int main(int argc, const char* argv[])
                 for (size_t i = 0; i < peers.size(); ++i)
                 {
                     grpc::ClientContext context;
-                    noise_rpc::StatusRequest request;
+                    dkg_rpc::StatusRequest request;
                     request.set_full(true);
-                    noise_rpc::StatusReply reply;
+                    dkg_rpc::StatusReply reply;
                     const auto status = stubs[i]->Status(&context, request, &reply);
                     if (!status.ok())
                     {
@@ -476,3 +479,4 @@ int main(int argc, const char* argv[])
         return 1;
     }
 }
+
